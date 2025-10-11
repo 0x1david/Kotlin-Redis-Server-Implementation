@@ -1,5 +1,6 @@
 import io.ktor.network.selector.*
 import io.ktor.network.sockets.*
+import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.readUTF8Line
 import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.*
@@ -24,12 +25,15 @@ suspend fun handleClient(socket: Socket) {
     socket.use {
         val input = it.openReadChannel()
         val output = it.openWriteChannel(autoFlush = true)
-//
-//        while (!input.isClosedForRead) {
-//            val line = input.readUTF8Line() ?: break
-//            println("Received: $line")
+
+        while (!input.isClosedForRead) {
+            val buf = ByteArray(1024);
+            val bytesRead = input.readAvailable(buf);
+            if (bytesRead == -1) break;
+
+            println("Received: $buf")
 
             output.writeFully("+PONG\r\n".toByteArray())
-//        }
+        }
     }
 }
