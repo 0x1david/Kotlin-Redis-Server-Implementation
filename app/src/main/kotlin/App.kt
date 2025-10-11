@@ -1,38 +1,35 @@
+import io.ktor.network.selector.*
+import io.ktor.network.sockets.*
+import io.ktor.utils.io.readUTF8Line
+import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.*
-import kotlinx.coroutines.Dispatchers.IO
-import java.net.*
 
 fun main() = runBlocking {
-    val serverSocket = ServerSocket(6379).apply {
-        reuseAddress = true
-    }
+    val selectorManager = SelectorManager(Dispatchers.IO)
+    val serverSocket = aSocket(selectorManager).tcp().bind("0.0.0.0", 6379)
 
     println("Server listening on port 6379")
 
     while (true) {
-        val clientSocket = withContext(IO) {
-            serverSocket.accept()
-        }
-
+        val socket = serverSocket.accept()
         println("Accepted new connection")
 
-        launch(IO) {
-            handleClient(clientSocket)
+        launch {
+            handleClient(socket)
         }
     }
 }
 
 suspend fun handleClient(socket: Socket) {
     socket.use {
-        val reader = it.getInputStream().bufferedReader()
-        val writer = it.getOutputStream().bufferedWriter()
+        val input = it.openReadChannel()
+        val output = it.openWriteChannel(autoFlush = true)
+//
+//        while (!input.isClosedForRead) {
+//            val line = input.readUTF8Line() ?: break
+//            println("Received: $line")
 
-        while (isActive && !socket.isClosed) {
-            val line = reader.readLine() ?: break
-            println("Received: $line")
-
-            writer.write("+PONG\r\n")
-            writer.flush()
-        }
+            output.writeFully("+PONG\r\n".toByteArray())
+//        }
     }
 }

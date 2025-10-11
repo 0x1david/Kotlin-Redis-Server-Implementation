@@ -21,6 +21,8 @@ repositories {
 }
 
 dependencies {
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.0")
+    implementation("io.ktor:ktor-network:3.1.3")
 }
 
 // Apply a specific Java toolchain to ease working on different environments.
