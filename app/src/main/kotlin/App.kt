@@ -1,12 +1,38 @@
-import java.net.ServerSocket
+import kotlinx.coroutines.*
+import kotlinx.coroutines.Dispatchers.IO
+import java.net.*
 
-fun main(args: Array<String>) {
-    System.err.println("Logs from your program will appear here!")
+fun main() = runBlocking {
+    val serverSocket = ServerSocket(6379).apply {
+        reuseAddress = true
+    }
 
-     var serverSocket = ServerSocket(6379)
+    println("Server listening on port 6379")
 
-     serverSocket.reuseAddress = true
+    while (true) {
+        val clientSocket = withContext(IO) {
+            serverSocket.accept()
+        }
 
-     serverSocket.accept()
-     println("accepted new connection")
+        println("Accepted new connection")
+
+        launch(IO) {
+            handleClient(clientSocket)
+        }
+    }
+}
+
+suspend fun handleClient(socket: Socket) {
+    socket.use {
+        val reader = it.getInputStream().bufferedReader()
+        val writer = it.getOutputStream().bufferedWriter()
+
+        while (isActive && !socket.isClosed) {
+            val line = reader.readLine() ?: break
+            println("Received: $line")
+
+            writer.write("+PONG\r\n")
+            writer.flush()
+        }
+    }
 }
