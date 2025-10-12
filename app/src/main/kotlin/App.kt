@@ -27,13 +27,27 @@ suspend fun handleClient(socket: Socket) {
         val output = it.openWriteChannel(autoFlush = true)
 
         while (!input.isClosedForRead) {
-            val buf = ByteArray(1024);
-            val bytesRead = input.readAvailable(buf);
-            if (bytesRead == -1) break;
+            val data = input.readRespValue()
 
-            println("Received: $buf")
+            println("Received: $data")
+            when (data) {
+                is RespArray -> {
+                    val values = data.elements
+                    val first = values.first()
+                    if (first is RespBulkString && first.value == "ECHO") {
+                        require(values.size == 2) { "Variable length RespArray not yet implemented" }
+                        output.writeRespValue(values[1])
+                    } else {
+                        output.writeFully("+PONG\r\n".toByteArray())
+                    }
+                }
 
-            output.writeFully("+PONG\r\n".toByteArray())
+                else -> {
+                    output.writeFully("+PONG\r\n".toByteArray())
+                }
+
+            }
+
         }
     }
 }

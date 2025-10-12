@@ -23,6 +23,11 @@ repositories {
 dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.0")
     implementation("io.ktor:ktor-network:3.1.3")
+    testImplementation("org.junit.jupiter:junit-jupiter:5.10.0")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.10.0")
+    testImplementation("io.kotest:kotest-assertions-core:6.0.0")
+    testImplementation("io.mockk:mockk:1.14.6")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.0")
 }
 
 // Apply a specific Java toolchain to ease working on different environments.
@@ -35,4 +40,8 @@ java {
 application {
     // Define the main class for the application.
     mainClass.set("AppKt")
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
