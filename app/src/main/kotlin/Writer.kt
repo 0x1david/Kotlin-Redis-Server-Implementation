@@ -38,7 +38,13 @@ private suspend fun ByteWriteChannel.writeInteger(value: Long) {
     writeCRLF()
 }
 
-private suspend fun ByteWriteChannel.writeBulkString(value: String) {
+private suspend fun ByteWriteChannel.writeBulkString(value: String?) {
+    if (value == null) {
+        writeStringUtf8("$-1")
+        writeCRLF()
+        return
+    }
+
     val bytes = value.encodeToByteArray()
     writeStringUtf8("$${bytes.size}")
     writeCRLF()

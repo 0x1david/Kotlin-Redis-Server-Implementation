@@ -12,7 +12,7 @@ sealed interface RespValue
 data class RespSimpleString(val value: String) : RespValue
 data class RespSimpleError(val message: String) : RespValue
 data class RespInteger(val value: Long) : RespValue
-data class RespBulkString(val value: String) : RespValue
+data class RespBulkString(val value: String?) : RespValue
 data class RespArray(val elements: List<RespValue>) : RespValue
 data class RespBool(val value: Boolean) : RespValue
 data class RespDouble(val value: Double) : RespValue
@@ -46,7 +46,7 @@ class RespParser(
         checkDepth()
         currentDepth++
         return try {
-            when (val type = channel.readByte().toChar()) {
+            when (val type = channel.readByte().toInt().toChar()) {
                 '*' -> readRespArray()
                 '$' -> readRespBulkString()
                 '!' -> readRespBulkError()

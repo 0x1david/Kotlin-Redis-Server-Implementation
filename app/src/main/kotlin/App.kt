@@ -1,53 +1,110 @@
 import io.ktor.network.selector.*
 import io.ktor.network.sockets.*
-import io.ktor.utils.io.readAvailable
-import io.ktor.utils.io.readUTF8Line
-import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
+import kotlinx.io.EOFException
 
-fun main() = runBlocking {
-    val selectorManager = SelectorManager(Dispatchers.IO)
-    val serverSocket = aSocket(selectorManager).tcp().bind("0.0.0.0", 6379)
+class RedisServer(
+    private val host: String = "0.0.0.0",
+    private val port: Int = 6379
+) {
+    private val dataStore = RedisDataStore()
+    private val commandChannel = Channel<CommandRequest>(Channel.UNLIMITED)
 
-    println("Server listening on port 6379")
+    suspend fun start() {
+        val selectorManager = SelectorManager(Dispatchers.IO)
+        val serverSocket = aSocket(selectorManager).tcp().bind(host, port)
 
-    while (true) {
-        val socket = serverSocket.accept()
-        println("Accepted new connection")
+        println("Server listening on port $port")
 
-        launch {
-            handleClient(socket)
+        coroutineScope {
+            launch { processCommands() }
+
+            while (true) {
+                val socket = serverSocket.accept()
+                println("Accepted new connection")
+                launch {
+                    handleClient(socket)
+                }
+            }
         }
     }
-}
 
-suspend fun handleClient(socket: Socket) {
-    socket.use {
-        val input = it.openReadChannel()
-        val output = it.openWriteChannel(autoFlush = true)
+    private suspend fun processCommands() {
+        for (request in commandChannel) {
+            val response = executeCommand(request.command)
+            request.responseChannel.send(response)
+        }
+    }
 
-        while (!input.isClosedForRead) {
-            val data = input.readRespValue()
+    private suspend fun handleClient(socket: Socket) {
+        socket.use {
+            val input = it.openReadChannel()
+            val output = it.openWriteChannel(autoFlush = true)
 
-            println("Received: $data")
-            when (data) {
-                is RespArray -> {
-                    val values = data.elements
-                    val first = values.first()
-                    if (first is RespBulkString && first.value == "ECHO") {
-                        require(values.size == 2) { "Variable length RespArray not yet implemented" }
-                        output.writeRespValue(values[1])
-                    } else {
-                        output.writeFully("+PONG\r\n".toByteArray())
-                    }
+            while (!input.isClosedForRead) {
+                try {
+                    val data = input.readRespValue()
+                    println("Received: $data")
+
+                    val responseChannel = Channel<RespValue>(1)
+                    commandChannel.send(CommandRequest(data, responseChannel))
+                    val response = responseChannel.receive()
+                    output.writeRespValue(response)
+                } catch (e: EOFException) {
+                    println("Client disconnected")
+                    break
+                } catch (e: Exception) {
+                    println("Error: ${e.message}")
+                    break
                 }
+            }
+        }
+    }
 
-                else -> {
-                    output.writeFully("+PONG\r\n".toByteArray())
+    private fun executeCommand(data: RespValue): RespValue {
+        if (data !is RespArray) return RespSimpleString("PONG")
+
+        val command = (data.elements.firstOrNull() as? RespBulkString)?.value?.uppercase()
+            ?: return RespSimpleError("ERR invalid command format")
+
+        return when (command) {
+            "PING" -> RespSimpleString("PONG")
+            "ECHO" -> {
+                if (data.elements.size != 2) {
+                    RespSimpleError("ERR wrong number of arguments for 'echo' command")
+                } else {
+                    data.elements[1]
                 }
-
             }
 
+            "GET" -> {
+                if (data.elements.size != 2) {
+                    RespSimpleError("ERR wrong number of arguments for 'get' command")
+                } else {
+                    dataStore.get(data.elements[1])
+                }
+            }
+
+            "SET" -> {
+                if (data.elements.size != 3) {
+                    RespSimpleError("ERR wrong number of arguments for 'set' command")
+                } else {
+                    dataStore.set(data.elements[1], data.elements[2])
+                    RespSimpleString("OK")
+                }
+            }
+
+            else -> RespSimpleError("ERR unknown command '$command'")
         }
     }
+
+    private data class CommandRequest(
+        val command: RespValue,
+        val responseChannel: Channel<RespValue>
+    )
+}
+
+fun main() = runBlocking {
+    RedisServer().start()
 }
