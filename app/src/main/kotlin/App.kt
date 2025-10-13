@@ -3,6 +3,8 @@ import io.ktor.network.sockets.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.io.EOFException
+import kotlin.collections.get
+import kotlin.collections.set
 
 class RedisServer(
     private val host: String = "0.0.0.0",
@@ -98,24 +100,8 @@ class RedisServer(
                 RespSimpleString("OK")
             }
 
-            "RPUSH" -> {
-                if (data.elements.size < 3) {
-                    return RespSimpleError("ERR wrong number of arguments for 'rpush' command: ${data.elements.size}")
-                }
-                var lst = dataStore.get(data.elements[1])
-                if (lst is RespNull) {
-                    lst = RespArray(mutableListOf())
-                    dataStore.set(data.elements[1], lst)
-                }
-                if (lst !is RespArray) {
-                    return RespSimpleError("Provided key doesn't correspond to an array.")
-                }
-                for (el in data.elements.drop(2)) {
-                    lst.elements.add(el)
-                }
-                RespInteger(lst.elements.size.toLong())
-            }
-
+            "RPUSH" -> push(data)
+            "LPUSH" -> push(data, true)
             "LRANGE" -> {
                 if (data.elements.size != 4) {
                     return RespSimpleError("ERR wrong number of arguments for 'rpush' command: ${data.elements.size}")
@@ -136,18 +122,13 @@ class RedisServer(
                     startVal.value.toIntOrNull() ?: return RespSimpleError("Start index is not a valid integer.")
                 val end = endVal.value.toIntOrNull() ?: return RespSimpleError("End index is not a valid integer.")
 
-                val normalizedStart =
-                    if (start < 0) (lstSize + start).coerceAtLeast(0) else start.coerceAtMost(lstSize)
-                val normalizedEnd =
-                    if (end < 0) (lstSize + end).coerceAtLeast(0) else end.coerceAtMost(lstSize - 1)
+                val normalizedStart = if (start < 0) (lstSize + start).coerceAtLeast(0) else start.coerceAtMost(lstSize)
+                val normalizedEnd = if (end < 0) (lstSize + end).coerceAtLeast(0) else end.coerceAtMost(lstSize - 1)
 
                 return when {
                     normalizedStart > normalizedEnd -> RespArray(mutableListOf())
                     normalizedStart >= lstSize -> RespArray(mutableListOf())
-                    else -> RespArray(
-                        lst.elements.subList(normalizedStart, (normalizedEnd + 1).coerceAtMost(lstSize))
-                            .toMutableList()
-                    )
+                    else -> RespArray(lst.elements.subList(normalizedStart, (normalizedEnd + 1)))
                 }
             }
 
@@ -155,11 +136,30 @@ class RedisServer(
         }
     }
 
+    private fun push(data: RespArray, left: Boolean = false): RespValue {
+        if (data.elements.size < 3) {
+            return RespSimpleError("ERR wrong number of arguments for '${if (left) 'l' else 'r'}push' command: ${data.elements.size}")
+        }
+        var lst = dataStore.get(data.elements[1])
+        if (lst is RespNull) {
+            lst = RespArray(mutableListOf())
+            dataStore.set(data.elements[1], lst)
+        }
+        if (lst !is RespArray) {
+            return RespSimpleError("Provided key doesn't correspond to an array.")
+        }
+        for (el in data.elements.drop(2)) {
+            if (left) lst.elements.addFirst(el) else lst.elements.add(el)
+        }
+        return RespInteger(lst.elements.size.toLong())
+    }
+
     private data class CommandRequest(
         val command: RespValue,
         val responseChannel: Channel<RespValue>
     )
 }
+
 
 fun main() = runBlocking {
     RedisServer().start()
