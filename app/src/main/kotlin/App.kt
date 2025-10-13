@@ -3,8 +3,6 @@ import io.ktor.network.sockets.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.io.EOFException
-import kotlin.collections.get
-import kotlin.collections.set
 
 class RedisServer(
     private val host: String = "0.0.0.0",
@@ -72,73 +70,48 @@ class RedisServer(
 
         return when (command) {
             "PING" -> RespSimpleString("PONG")
-            "ECHO" -> {
-                if (data.elements.size != 2) return RespSimpleError("ERR wrong number of arguments for 'echo' command: ${data.elements.size}")
-                data.elements[1]
-            }
-
-            "GET" -> {
-                if (data.elements.size != 2) return RespSimpleError("ERR wrong number of arguments for 'get' command: ${data.elements.size}")
-                dataStore.get(data.elements[1])
-            }
-
-            "SET" -> {
-                val size = data.elements.size
-                if (size % 2 == 0) return RespSimpleError("ERR wrong number of arguments for 'set' command: $size")
-
-                val params = DataStoreParams()
-                for (i in 3 until size step 2) {
-                    params.parseParameter(data.elements[i], data.elements[i + 1])
-                }
-
-                dataStore.set(data.elements[1], data.elements[2], params)
-                RespSimpleString("OK")
-            }
-
-            "RPUSH" -> push(data)
-            "LPUSH" -> push(data, true)
-            "LLEN" -> {
-                if (data.elements.size != 2) return RespSimpleError("ERR wrong number of arguments for 'get' command: ${data.elements.size}")
-
-                val item = dataStore.get(data.elements[1])
-                if (item is RespArray) RespInteger(item.elements.size.toLong()) else RespInteger(0)
-            }
-
-            "LRANGE" -> {
-                if (data.elements.size != 4) {
-                    return RespSimpleError("ERR wrong number of arguments for 'rpush' command: ${data.elements.size}")
-                }
-                val startVal = data.elements[2]
-                val endVal = data.elements[3]
-                val lst = dataStore.get(data.elements[1])
-
-                if (lst is RespNull) return RespArray(mutableListOf())
-                if (lst !is RespArray) return RespSimpleError("Provided key doesn't correspond to an array.")
-                val lstSize = lst.elements.size
-                if (startVal !is RespBulkString) return RespSimpleError("Provided start index is not a bulk string.")
-                if (endVal !is RespBulkString) return RespSimpleError("Provided end index is not a bulk string.")
-                if (startVal.value == null) return RespSimpleError("Provided start index is null.")
-                if (endVal.value == null) return RespSimpleError("Provided end index is null.")
-
-                val start =
-                    startVal.value.toIntOrNull() ?: return RespSimpleError("Start index is not a valid integer.")
-                val end = endVal.value.toIntOrNull() ?: return RespSimpleError("End index is not a valid integer.")
-
-                val normalizedStart = if (start < 0) (lstSize + start).coerceAtLeast(0) else start.coerceAtMost(lstSize)
-                val normalizedEnd = if (end < 0) (lstSize + end).coerceAtLeast(0) else end.coerceAtMost(lstSize - 1)
-
-                return when {
-                    normalizedStart > normalizedEnd -> RespArray(mutableListOf())
-                    normalizedStart >= lstSize -> RespArray(mutableListOf())
-                    else -> RespArray(lst.elements.subList(normalizedStart, (normalizedEnd + 1)))
+            "ECHO" -> data.validateAndExecute(2, "echo") { data.elements[1] }
+            "GET" -> data.validateAndExecute(2, "get") { dataStore.get(data.elements[1]) }
+            "SET" -> executeSet(data)
+            "RPUSH" -> executePush(data)
+            "LPUSH" -> executePush(data, true)
+            "LLEN" -> data.validateAndExecute(2, "llen") {
+                when (val item = dataStore.get(data.elements[1])) {
+                    is RespArray -> RespInteger(item.elements.size.toLong())
+                    else -> RespInteger(0)
                 }
             }
+
+            "LRANGE" -> lrange(data)
 
             else -> RespSimpleError("ERR unknown command '$command'")
         }
     }
 
-    private fun push(data: RespArray, left: Boolean = false): RespValue {
+    private inline fun RespArray.validateAndExecute(
+        expectedSize: Int,
+        command: String,
+        block: () -> RespValue
+    ): RespValue =
+        if (elements.size != expectedSize)
+            RespSimpleError("ERR wrong number of arguments for '$command' command: ${elements.size}")
+        else block()
+
+
+    private fun executeSet(data: RespArray): RespValue {
+        val size = data.elements.size
+        if (size % 2 == 0) return RespSimpleError("ERR wrong number of arguments for 'set' command: $size")
+
+        val params = DataStoreParams()
+        for (i in 3 until size step 2) {
+            params.parseParameter(data.elements[i], data.elements[i + 1])
+        }
+
+        dataStore.set(data.elements[1], data.elements[2], params)
+        return RespSimpleString("OK")
+    }
+
+    private fun executePush(data: RespArray, left: Boolean = false): RespValue {
         if (data.elements.size < 3) {
             return RespSimpleError("ERR wrong number of arguments for '${if (left) 'l' else 'r'}push' command: ${data.elements.size}")
         }
@@ -153,6 +126,36 @@ class RedisServer(
             if (left) lst.elements.addFirst(el) else lst.elements.add(el)
         }
         return RespInteger(lst.elements.size.toLong())
+    }
+
+    private fun lrange(data: RespArray): RespValue {
+        if (data.elements.size != 4) {
+            return RespSimpleError("ERR wrong number of arguments for 'rpush' command: ${data.elements.size}")
+        }
+        val startVal = data.elements[2]
+        val endVal = data.elements[3]
+        val lst = dataStore.get(data.elements[1])
+
+        if (lst is RespNull) return RespArray(mutableListOf())
+        if (lst !is RespArray) return RespSimpleError("Provided key doesn't correspond to an array.")
+        val lstSize = lst.elements.size
+        if (startVal !is RespBulkString) return RespSimpleError("Provided start index is not a bulk string.")
+        if (endVal !is RespBulkString) return RespSimpleError("Provided end index is not a bulk string.")
+        if (startVal.value == null) return RespSimpleError("Provided start index is null.")
+        if (endVal.value == null) return RespSimpleError("Provided end index is null.")
+
+        val start =
+            startVal.value.toIntOrNull() ?: return RespSimpleError("Start index is not a valid integer.")
+        val end = endVal.value.toIntOrNull() ?: return RespSimpleError("End index is not a valid integer.")
+
+        val normalizedStart = if (start < 0) (lstSize + start).coerceAtLeast(0) else start.coerceAtMost(lstSize)
+        val normalizedEnd = if (end < 0) (lstSize + end).coerceAtLeast(0) else end.coerceAtMost(lstSize - 1)
+
+        return when {
+            normalizedStart > normalizedEnd -> RespArray(mutableListOf())
+            normalizedStart >= lstSize -> RespArray(mutableListOf())
+            else -> RespArray(lst.elements.subList(normalizedStart, (normalizedEnd + 1)))
+        }
     }
 
     private data class CommandRequest(
