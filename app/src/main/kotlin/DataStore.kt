@@ -9,12 +9,12 @@ data class DataStoreValue(
 class RedisDataStore {
     private val data = HashMap<RespValue, DataStoreValue>()
 
-    fun get(k: RespValue): RespValue {
+    fun get(k: RespValue, default: RespValue = RespNull): RespValue {
         val value = data[k]
         if (value == null || value.expiry?.isBefore(Instant.now()) == true) {
             // For now removal will be always lazy, might reconsider later and have some periodic deletion
             data.remove(k)
-            return RespNull
+            return default
         }
         return value.value
     }

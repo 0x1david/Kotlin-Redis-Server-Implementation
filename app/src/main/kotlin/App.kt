@@ -73,24 +73,19 @@ class RedisServer(
         return when (command) {
             "PING" -> RespSimpleString("PONG")
             "ECHO" -> {
-                if (data.elements.size != 2) {
-                    return RespSimpleError("ERR wrong number of arguments for 'echo' command: ${data.elements.size}")
-                }
+                if (data.elements.size != 2) return RespSimpleError("ERR wrong number of arguments for 'echo' command: ${data.elements.size}")
                 data.elements[1]
             }
 
             "GET" -> {
-                if (data.elements.size != 2) {
-                    return RespSimpleError("ERR wrong number of arguments for 'get' command: ${data.elements.size}")
-                }
+                if (data.elements.size != 2) return RespSimpleError("ERR wrong number of arguments for 'get' command: ${data.elements.size}")
                 dataStore.get(data.elements[1])
             }
 
             "SET" -> {
                 val size = data.elements.size
-                if (size % 2 == 0) {
-                    return RespSimpleError("ERR wrong number of arguments for 'set' command: $size")
-                }
+                if (size % 2 == 0) return RespSimpleError("ERR wrong number of arguments for 'set' command: $size")
+
                 val params = DataStoreParams()
                 for (i in 3 until size step 2) {
                     params.parseParameter(data.elements[i], data.elements[i + 1])
@@ -102,6 +97,13 @@ class RedisServer(
 
             "RPUSH" -> push(data)
             "LPUSH" -> push(data, true)
+            "LLEN" -> {
+                if (data.elements.size != 2) return RespSimpleError("ERR wrong number of arguments for 'get' command: ${data.elements.size}")
+
+                val item = dataStore.get(data.elements[1])
+                if (item is RespArray) RespInteger(item.elements.size.toLong()) else RespInteger(0)
+            }
+
             "LRANGE" -> {
                 if (data.elements.size != 4) {
                     return RespSimpleError("ERR wrong number of arguments for 'rpush' command: ${data.elements.size}")
@@ -145,9 +147,8 @@ class RedisServer(
             lst = RespArray(mutableListOf())
             dataStore.set(data.elements[1], lst)
         }
-        if (lst !is RespArray) {
-            return RespSimpleError("Provided key doesn't correspond to an array.")
-        }
+        if (lst !is RespArray) return RespSimpleError("Provided key doesn't correspond to an array.")
+
         for (el in data.elements.drop(2)) {
             if (left) lst.elements.addFirst(el) else lst.elements.add(el)
         }
