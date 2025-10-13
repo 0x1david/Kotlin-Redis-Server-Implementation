@@ -13,7 +13,7 @@ data class RespSimpleString(val value: String) : RespValue
 data class RespSimpleError(val message: String) : RespValue
 data class RespInteger(val value: Long) : RespValue
 data class RespBulkString(val value: String?) : RespValue
-data class RespArray(var elements: MutableList<RespValue>) : RespValue
+class RespArray(var elements: MutableList<RespValue>) : RespValue
 data class RespBool(val value: Boolean) : RespValue
 data class RespDouble(val value: Double) : RespValue
 data class RespBigNumber(val value: String) : RespValue

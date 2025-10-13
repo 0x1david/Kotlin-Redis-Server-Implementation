@@ -116,6 +116,41 @@ class RedisServer(
                 RespInteger(lst.elements.size.toLong())
             }
 
+            "LRANGE" -> {
+                if (data.elements.size != 4) {
+                    return RespSimpleError("ERR wrong number of arguments for 'rpush' command: ${data.elements.size}")
+                }
+                val startVal = data.elements[2]
+                val endVal = data.elements[3]
+                val lst = dataStore.get(data.elements[1])
+
+                if (lst is RespNull) return RespArray(mutableListOf())
+                if (lst !is RespArray) return RespSimpleError("Provided key doesn't correspond to an array.")
+                val lstSize = lst.elements.size
+                if (startVal !is RespBulkString) return RespSimpleError("Provided start index is not a bulk string.")
+                if (endVal !is RespBulkString) return RespSimpleError("Provided end index is not a bulk string.")
+                if (startVal.value == null) return RespSimpleError("Provided start index is null.")
+                if (endVal.value == null) return RespSimpleError("Provided end index is null.")
+
+                val start =
+                    startVal.value.toIntOrNull() ?: return RespSimpleError("Start index is not a valid integer.")
+                val end = endVal.value.toIntOrNull() ?: return RespSimpleError("End index is not a valid integer.")
+
+                val normalizedStart =
+                    if (start < 0) (lstSize + start).coerceAtLeast(0) else start.coerceAtMost(lstSize)
+                val normalizedEnd =
+                    if (end < 0) (lstSize + end).coerceAtLeast(0) else end.coerceAtMost(lstSize - 1)
+
+                return when {
+                    normalizedStart > normalizedEnd -> RespArray(mutableListOf())
+                    normalizedStart >= lstSize -> RespArray(mutableListOf())
+                    else -> RespArray(
+                        lst.elements.subList(normalizedStart, (normalizedEnd + 1).coerceAtMost(lstSize))
+                            .toMutableList()
+                    )
+                }
+            }
+
             else -> RespSimpleError("ERR unknown command '$command'")
         }
     }
