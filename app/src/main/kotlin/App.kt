@@ -99,18 +99,20 @@ class RedisServer(
             }
 
             "RPUSH" -> {
-                if (data.elements.size != 3) {
+                if (data.elements.size < 3) {
                     return RespSimpleError("ERR wrong number of arguments for 'rpush' command: ${data.elements.size}")
                 }
-                val lst = dataStore.get(data.elements[1])
+                var lst = dataStore.get(data.elements[1])
                 if (lst is RespNull) {
-                    dataStore.set(data.elements[1], RespArray(mutableListOf(data.elements[2])))
-                    return RespInteger(1)
+                    lst = RespArray(mutableListOf())
+                    dataStore.set(data.elements[1], lst)
                 }
                 if (lst !is RespArray) {
                     return RespSimpleError("Provided key doesn't correspond to an array.")
                 }
-                lst.elements.add(data.elements[2])
+                for (el in data.elements.drop(2)) {
+                    lst.elements.add(el)
+                }
                 RespInteger(lst.elements.size.toLong())
             }
 
