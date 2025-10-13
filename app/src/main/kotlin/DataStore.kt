@@ -14,7 +14,7 @@ class RedisDataStore {
         if (value == null || value.expiry?.isBefore(Instant.now()) == true) {
             // For now removal will be always lazy, might reconsider later and have some periodic deletion
             data.remove(k)
-            return RespBulkString(null)
+            return RespNull
         }
         return value.value
     }

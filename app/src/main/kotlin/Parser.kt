@@ -13,7 +13,7 @@ data class RespSimpleString(val value: String) : RespValue
 data class RespSimpleError(val message: String) : RespValue
 data class RespInteger(val value: Long) : RespValue
 data class RespBulkString(val value: String?) : RespValue
-data class RespArray(val elements: List<RespValue>) : RespValue
+data class RespArray(var elements: MutableList<RespValue>) : RespValue
 data class RespBool(val value: Boolean) : RespValue
 data class RespDouble(val value: Double) : RespValue
 data class RespBigNumber(val value: String) : RespValue
@@ -104,7 +104,7 @@ class RespParser(
         val count = channel.readUTF8Line()?.toIntOrNull() ?: throw ProtocolException("Invalid array length")
         checkCollectionSize(count)
 
-        val arr = (0 until count).map {
+        val arr = (0 until count).mapTo(mutableListOf()) {
             readRespPayload()
         }
         return RespArray(arr)

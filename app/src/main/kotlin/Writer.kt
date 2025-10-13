@@ -124,8 +124,7 @@ private suspend fun ByteWriteChannel.writePush(entries: List<RespValue>) {
 }
 
 private suspend fun ByteWriteChannel.writeNull() {
-    writeStringUtf8("_")
-    writeCRLF()
+    writeRespValue(RespBulkString(null))
 }
 
 private suspend fun ByteWriteChannel.writeCRLF() {
