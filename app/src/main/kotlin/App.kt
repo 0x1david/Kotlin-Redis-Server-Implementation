@@ -72,27 +72,30 @@ class RedisServer(
             "PING" -> RespSimpleString("PONG")
             "ECHO" -> {
                 if (data.elements.size != 2) {
-                    RespSimpleError("ERR wrong number of arguments for 'echo' command")
-                } else {
-                    data.elements[1]
+                    return RespSimpleError("ERR wrong number of arguments for 'echo' command: ${data.elements.size}")
                 }
+                data.elements[1]
             }
 
             "GET" -> {
                 if (data.elements.size != 2) {
-                    RespSimpleError("ERR wrong number of arguments for 'get' command")
-                } else {
-                    dataStore.get(data.elements[1])
+                    return RespSimpleError("ERR wrong number of arguments for 'get' command: ${data.elements.size}")
                 }
+                dataStore.get(data.elements[1])
             }
 
             "SET" -> {
-                if (data.elements.size != 3) {
-                    RespSimpleError("ERR wrong number of arguments for 'set' command")
-                } else {
-                    dataStore.set(data.elements[1], data.elements[2])
-                    RespSimpleString("OK")
+                val size = data.elements.size
+                if (size % 2 == 0) {
+                    return RespSimpleError("ERR wrong number of arguments for 'set' command: $size")
                 }
+                val params = DataStoreParams()
+                for (i in 3 until size step 2) {
+                    params.parseParameter(data.elements[i], data.elements[i + 1])
+                }
+
+                dataStore.set(data.elements[1], data.elements[2], params)
+                RespSimpleString("OK")
             }
 
             else -> RespSimpleError("ERR unknown command '$command'")
