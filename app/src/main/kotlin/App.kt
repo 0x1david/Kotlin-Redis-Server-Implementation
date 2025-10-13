@@ -75,6 +75,8 @@ class RedisServer(
             "SET" -> executeSet(data)
             "RPUSH" -> executePush(data)
             "LPUSH" -> executePush(data, true)
+            "RPOP" -> executePop(data)
+            "LPOP" -> executePop(data, true)
             "LLEN" -> data.validateAndExecute(2, "llen") {
                 when (val item = dataStore.get(data.elements[1])) {
                     is RespArray -> RespInteger(item.elements.size.toLong())
@@ -126,6 +128,30 @@ class RedisServer(
             if (left) lst.elements.addFirst(el) else lst.elements.add(el)
         }
         return RespInteger(lst.elements.size.toLong())
+    }
+
+    private fun executePop(data: RespArray, left: Boolean = false): RespValue {
+        val cmdName = if (left) "lpop" else "rpop"
+        val argSize = data.elements.size
+        if (argSize < 2) return RespSimpleError("ERR wrong number of arguments for '$cmdName' command: ${data.elements.size}")
+
+
+        val lst = when (val item = dataStore.get(data.elements[1])) {
+            is RespNull -> return RespNull
+            is RespArray -> item
+            else -> return RespSimpleError("Provided key doesn't correspond to an array")
+        }
+        val popCnt = if (argSize == 2) 1 else {
+            (data.elements[2] as? RespBulkString)?.value?.toIntOrNull()
+                ?: return RespSimpleError("ERR value is not an integer or out of range")
+        }
+
+        if (popCnt <= 0 || popCnt > lst.elements.size) return RespNull
+
+        val pop = { if (left) lst.elements.removeFirst() else lst.elements.removeLast() }
+
+        return if (popCnt == 1) pop()
+        else RespArray(MutableList(popCnt) { pop() })
     }
 
     private fun lrange(data: RespArray): RespValue {
