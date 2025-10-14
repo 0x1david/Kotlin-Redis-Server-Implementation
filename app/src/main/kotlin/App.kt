@@ -3,6 +3,7 @@ import io.ktor.network.sockets.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.io.EOFException
+import java.time.Instant
 
 class RedisServer(
     private val host: String = "0.0.0.0",
@@ -10,6 +11,7 @@ class RedisServer(
 ) {
     private val dataStore = RedisDataStore()
     private val commandChannel = Channel<CommandRequest>(Channel.UNLIMITED)
+    private val blockedMap = BlockedMap()
 
     suspend fun start() {
         val selectorManager = SelectorManager(Dispatchers.IO)
@@ -18,20 +20,29 @@ class RedisServer(
         println("Server listening on port $port")
 
         coroutineScope {
-            launch { processCommands() }
+            launch { runEventLoop() }
 
             while (true) {
                 val socket = serverSocket.accept()
                 println("Accepted new connection")
-                launch {
-                    handleClient(socket)
-                }
+                launch { handleClient(socket) }
             }
         }
     }
 
-    private suspend fun processCommands() {
-        for (request in commandChannel) {
+    private suspend fun checkAndHandleTimeouts() {
+        val expired = blockedMap.getClientsTimingOutBefore(Instant.now())
+        expired.forEach {
+            responseChannels[it]?.send(RespNull)
+        }
+
+    }
+
+    private suspend fun runEventLoop() {
+        while (true) {
+            checkAndHandleTimeouts()
+
+            val request = commandChannel.receive()
             val response = executeCommand(request.command)
             request.responseChannel.send(response)
         }
@@ -62,7 +73,8 @@ class RedisServer(
         }
     }
 
-    private fun executeCommand(data: RespValue): RespValue {
+    private fun executeCommand(request: CommandRequest): RespValue {
+        val data = request.command
         if (data !is RespArray) return RespSimpleString("PONG")
 
         val command = (data.elements.firstOrNull() as? RespBulkString)?.value?.uppercase()
@@ -77,6 +89,26 @@ class RedisServer(
             "LPUSH" -> executePush(data, true)
             "RPOP" -> executePop(data)
             "LPOP" -> executePop(data, true)
+            "BLPOP" -> {
+                val keys = request.command.keys
+                val timeout = request.command.timeoutSec
+
+                // Try immediate pop first
+                for (key in keys) {
+                    val value = dataStore.lpop(key)
+                    if (value != null) {
+                        return RespArray(listOf(key, value))
+                    }
+                }
+
+                // Nothing available - block the client
+                val clientId = request.clientId // Need to add this to CommandRequest
+                responseChannels[clientId] = request.responseChannel
+                blockedMap.blockClient(clientId, keys, timeout)
+
+                return RespValue.NO_RESPONSE // Special marker to skip sending response
+            }
+
             "LLEN" -> data.validateAndExecute(2, "llen") {
                 when (val item = dataStore.get(data.elements[1])) {
                     is RespArray -> RespInteger(item.elements.size.toLong())

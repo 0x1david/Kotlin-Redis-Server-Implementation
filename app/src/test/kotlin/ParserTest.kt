@@ -1,4 +1,5 @@
 import io.kotest.assertions.throwables.shouldThrow
+import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import io.ktor.utils.io.*
 import kotlinx.coroutines.test.runTest
@@ -94,8 +95,8 @@ class RespParserTest {
         val parser = RespParser(channel)
 
         val result = parser.readRespPayload()
-
-        result shouldBe RespArray(
+        val arr = result as RespArray
+        arr.elements.shouldContainExactly(
             listOf(
                 RespSimpleString("hello"),
                 RespSimpleString("world")
