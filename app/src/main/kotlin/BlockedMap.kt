@@ -18,9 +18,9 @@ class BlockedMap {
         return timeoutQueue.peek()
     }
 
-    fun blockClient(clientId: String, keys: List<RespValue>, timeoutSec: Long) {
-        if (timeoutSec != 0.toLong()) {
-            val deadline = Instant.now().plusSeconds(timeoutSec)
+    fun blockClient(clientId: String, keys: List<RespValue>, timeoutSec: Double) {
+        if (timeoutSec != 0.0) {
+            val deadline = Instant.now().plusMillis((timeoutSec * 1000).toLong())
             timeoutQueue.add(TimeoutEntry(clientId, deadline))
         }
         val ctk = clientToKeys.getOrPut(clientId) { mutableListOf() }

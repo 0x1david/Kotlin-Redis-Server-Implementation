@@ -119,8 +119,8 @@ class RedisServer(
                 val key = data.elements[1]
                 val timeout = data.elements[2]
                 if (timeout !is RespBulkString) return RespSimpleError("Expected second argument to be bulk string for blpop")
-                val timeoutValue = timeout.value?.toLongOrNull()
-                    ?: return RespSimpleError("Expected second argument to be integer for blpop")
+                val timeoutValue = timeout.value?.toDoubleOrNull()
+                    ?: return RespSimpleError("Expected second argument to be double for blpop")
 
                 val lst = when (val item = dataStore.get(key)) {
                     is RespNull -> null
