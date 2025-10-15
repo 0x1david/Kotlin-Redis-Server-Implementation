@@ -3,6 +3,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Assertions.*
 import java.time.Instant
 
+
 class BlockedMapTest {
     private lateinit var blockedMap: BlockedMap
     private val key1 = RespBulkString("key1")
@@ -16,7 +17,7 @@ class BlockedMapTest {
 
     @Test
     fun `blocking single client on single key returns that client`() {
-        blockedMap.blockClient("client1", listOf(key1))
+        blockedMap.blockClient("client1", listOf(key1), NO_TIMEOUT)
 
         assertEquals("client1", blockedMap.getNextClientForKey(key1))
         assertNull(blockedMap.getNextClientForKey(key1))
@@ -24,9 +25,9 @@ class BlockedMapTest {
 
     @Test
     fun `blocking multiple clients on same key returns FIFO order`() {
-        blockedMap.blockClient("client1", listOf(key1))
-        blockedMap.blockClient("client2", listOf(key1))
-        blockedMap.blockClient("client3", listOf(key1))
+        blockedMap.blockClient("client1", listOf(key1), NO_TIMEOUT)
+        blockedMap.blockClient("client2", listOf(key1), NO_TIMEOUT)
+        blockedMap.blockClient("client3", listOf(key1), NO_TIMEOUT)
 
         assertEquals("client1", blockedMap.getNextClientForKey(key1))
         assertEquals("client2", blockedMap.getNextClientForKey(key1))
@@ -36,7 +37,7 @@ class BlockedMapTest {
 
     @Test
     fun `blocking client on multiple keys removes from all when unblocked`() {
-        blockedMap.blockClient("client1", listOf(key1, key2, key3))
+        blockedMap.blockClient("client1", listOf(key1, key2, key3), NO_TIMEOUT)
 
         assertEquals("client1", blockedMap.getNextClientForKey(key1))
         // Should be removed from all other keys
@@ -46,8 +47,8 @@ class BlockedMapTest {
 
     @Test
     fun `multiple clients on different keys are independent`() {
-        blockedMap.blockClient("client1", listOf(key1))
-        blockedMap.blockClient("client2", listOf(key2))
+        blockedMap.blockClient("client1", listOf(key1), NO_TIMEOUT)
+        blockedMap.blockClient("client2", listOf(key2), NO_TIMEOUT)
 
         assertEquals("client2", blockedMap.getNextClientForKey(key2))
         assertEquals("client1", blockedMap.getNextClientForKey(key1))
@@ -56,8 +57,8 @@ class BlockedMapTest {
     @Test
     fun `timeout returns expired clients and removes them`() {
         val now = Instant.now()
-        blockedMap.blockClient("client1", listOf(key1), timeoutSec = 1)
-        blockedMap.blockClient("client2", listOf(key2), timeoutSec = 5)
+        blockedMap.blockClient("client1", listOf(key1), timeoutSec = 1.0)
+        blockedMap.blockClient("client2", listOf(key2), timeoutSec = 5.0)
 
         val expired = blockedMap.getClientsTimingOutBefore(now.plusSeconds(3))
 
@@ -69,9 +70,9 @@ class BlockedMapTest {
     @Test
     fun `timeout returns multiple expired clients in deadline order`() {
         val now = Instant.now()
-        blockedMap.blockClient("client1", listOf(key1), timeoutSec = 2)
-        blockedMap.blockClient("client2", listOf(key2), timeoutSec = 1)
-        blockedMap.blockClient("client3", listOf(key3), timeoutSec = 3)
+        blockedMap.blockClient("client1", listOf(key1), timeoutSec = 2.0)
+        blockedMap.blockClient("client2", listOf(key2), timeoutSec = 1.0)
+        blockedMap.blockClient("client3", listOf(key3), timeoutSec = 3.0)
 
         val expired = blockedMap.getClientsTimingOutBefore(now.plusSeconds(5))
 
@@ -82,7 +83,7 @@ class BlockedMapTest {
     @Test
     fun `timeout skips already unblocked clients`() {
         val now = Instant.now()
-        blockedMap.blockClient("client1", listOf(key1), timeoutSec = 5)
+        blockedMap.blockClient("client1", listOf(key1), timeoutSec = 5.0)
 
         // Unblock by servicing the key
         blockedMap.getNextClientForKey(key1)
@@ -94,7 +95,7 @@ class BlockedMapTest {
     @Test
     fun `no timeout when null timeoutSec`() {
         val now = Instant.now()
-        blockedMap.blockClient("client1", listOf(key1), timeoutSec = null)
+        blockedMap.blockClient("client1", listOf(key1), NO_TIMEOUT)
 
         val expired = blockedMap.getClientsTimingOutBefore(now.plusSeconds(1000))
         assertTrue(expired.isEmpty())
@@ -104,7 +105,7 @@ class BlockedMapTest {
     @Test
     fun `client blocked on multiple keys with timeout removed from all on timeout`() {
         val now = Instant.now()
-        blockedMap.blockClient("client1", listOf(key1, key2), timeoutSec = 1)
+        blockedMap.blockClient("client1", listOf(key1, key2), timeoutSec = 1.0)
 
         val expired = blockedMap.getClientsTimingOutBefore(now.plusSeconds(2))
 
@@ -116,8 +117,8 @@ class BlockedMapTest {
     @Test
     fun `mixed timeout and non-timeout clients`() {
         val now = Instant.now()
-        blockedMap.blockClient("client1", listOf(key1), timeoutSec = null)
-        blockedMap.blockClient("client2", listOf(key1), timeoutSec = 1)
+        blockedMap.blockClient("client1", listOf(key1), NO_TIMEOUT)
+        blockedMap.blockClient("client2", listOf(key1), timeoutSec = 1.0)
 
         val expired = blockedMap.getClientsTimingOutBefore(now.plusSeconds(2))
 
@@ -132,8 +133,8 @@ class BlockedMapTest {
 
     @Test
     fun `same client blocked multiple times on different keys`() {
-        blockedMap.blockClient("client1", listOf(key1))
-        blockedMap.blockClient("client1", listOf(key2))
+        blockedMap.blockClient("client1", listOf(key1), NO_TIMEOUT)
+        blockedMap.blockClient("client1", listOf(key2), NO_TIMEOUT)
 
         assertEquals("client1", blockedMap.getNextClientForKey(key1))
         // Client already fully unblocked

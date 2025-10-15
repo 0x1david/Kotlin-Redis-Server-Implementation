@@ -95,167 +95,23 @@ class RedisServer(
         blockedMap.unblockClient(clientId)
     }
 
-    // Improvement: Split Parsing and Execution
     private suspend fun executeCommand(request: CommandRequest): RespValue {
-        val data = request.command
-        if (data !is RespArray) return RespSimpleString("PONG")
+        val parseResult = parseCommand(request.command)
 
-        val command = (data.elements.firstOrNull() as? RespBulkString)?.value?.uppercase()
-            ?: return RespSimpleError("ERR invalid command format")
-
-        return when (command) {
-            "PING" -> RespSimpleString("PONG")
-            "ECHO" -> data.validateAndExecute(2, "echo") { data.elements[1] }
-            "GET" -> data.validateAndExecute(2, "get") { dataStore.get(data.elements[1]) }
-            "SET" -> executeSet(data)
-            "RPUSH" -> executePush(data)
-            "LPUSH" -> executePush(data, true)
-            "RPOP" -> executePop(data)
-            "LPOP" -> executePop(data, true)
-            "BLPOP" -> {
-                if (data.elements.size != 3) {
-                    return RespSimpleError("Expected 3 arguments for 'blpop' command, got: ${data.elements.size}")
-                }
-                val key = data.elements[1]
-                val timeout = data.elements[2]
-                if (timeout !is RespBulkString) return RespSimpleError("Expected second argument to be bulk string for blpop")
-                val timeoutValue = timeout.value?.toDoubleOrNull()
-                    ?: return RespSimpleError("Expected second argument to be double for blpop")
-
-                val lst = when (val item = dataStore.get(key)) {
-                    is RespNull -> null
-                    is RespArray -> item
-                    else -> return RespSimpleError("Underlying datastore element is not a list")
-                }
-
-                if (lst != null && lst.elements.isNotEmpty()) {
-                    val poppedValue = lst.elements.removeFirst()
-                    return RespArray(mutableListOf(key, poppedValue))
-                }
-
-                val clientId = request.clientId
-                blockedMap.blockClient(clientId, listOf(key), timeoutValue)
-                return NoResponse
-            }
-
-            "LLEN" -> data.validateAndExecute(2, "llen") {
-                when (val item = dataStore.get(data.elements[1])) {
-                    is RespArray -> RespInteger(item.elements.size.toLong())
-                    else -> RespInteger(0)
-                }
-            }
-
-            "LRANGE" -> lrange(data)
-
-            else -> RespSimpleError("ERR unknown command '$command'")
-        }
-    }
-
-    private inline fun RespArray.validateAndExecute(
-        expectedSize: Int,
-        command: String,
-        block: () -> RespValue
-    ): RespValue =
-        if (elements.size != expectedSize)
-            RespSimpleError("ERR wrong number of arguments for '$command' command: ${elements.size}")
-        else block()
-
-
-    private fun executeSet(data: RespArray): RespValue {
-        val size = data.elements.size
-        if (size % 2 == 0) return RespSimpleError("ERR wrong number of arguments for 'set' command: $size")
-
-        val params = DataStoreParams()
-        for (i in 3 until size step 2) {
-            params.parseParameter(data.elements[i], data.elements[i + 1])
+        if (parseResult.isFailure) {
+            return RespSimpleError(parseResult.exceptionOrNull()?.message ?: "ERR parse failed")
         }
 
-        dataStore.set(data.elements[1], data.elements[2], params)
-        return RespSimpleString("OK")
-    }
+        val command = parseResult.getOrThrow()
+        val context = ExecutionContext(
+            dataStore = dataStore,
+            blockedMap = blockedMap,
+            responseChannels = responseChannels,
+            clientId = request.clientId,
+            checkTimeouts = ::checkAndHandleTimeouts
+        )
 
-    private suspend fun executePush(data: RespArray, left: Boolean = false): RespValue {
-        if (data.elements.size < 3) {
-            return RespSimpleError("ERR wrong number of arguments for '${if (left) 'l' else 'r'}push' command: ${data.elements.size}")
-        }
-        checkAndHandleTimeouts()
-
-        val key = data.elements[1]
-        var lst = dataStore.get(key)
-        if (lst is RespNull) {
-            lst = RespArray(mutableListOf())
-            dataStore.set(key, lst)
-        }
-        if (lst !is RespArray) return RespSimpleError("Provided key doesn't correspond to an array.")
-
-        for (el in data.elements.drop(2)) {
-            if (left) lst.elements.addFirst(el) else lst.elements.add(el)
-        }
-
-        val finalSize = lst.elements.size.toLong()
-
-        while (lst.elements.isNotEmpty()) {
-            val clientId = blockedMap.getNextClientForKey(key) ?: break
-
-            val poppedValue = lst.elements.removeFirst()
-            responseChannels[clientId]?.send(RespArray(mutableListOf(key, poppedValue)))
-        }
-
-        return RespInteger(finalSize)
-    }
-
-    private fun executePop(data: RespArray, left: Boolean = false): RespValue {
-        val cmdName = if (left) "lpop" else "rpop"
-        val argSize = data.elements.size
-        if (argSize < 2) return RespSimpleError("ERR wrong number of arguments for '$cmdName' command: ${data.elements.size}")
-
-
-        val lst = when (val item = dataStore.get(data.elements[1])) {
-            is RespNull -> return RespNull
-            is RespArray -> item
-            else -> return RespSimpleError("Provided key doesn't correspond to an array")
-        }
-        val popCnt = if (argSize == 2) 1 else {
-            (data.elements[2] as? RespBulkString)?.value?.toIntOrNull()
-                ?: return RespSimpleError("ERR value is not an integer or out of range")
-        }
-
-        if (popCnt <= 0 || popCnt > lst.elements.size) return RespNull
-
-        val pop = { if (left) lst.elements.removeFirst() else lst.elements.removeLast() }
-
-        return if (popCnt == 1) pop()
-        else RespArray(MutableList(popCnt) { pop() })
-    }
-
-    private fun lrange(data: RespArray): RespValue {
-        if (data.elements.size != 4) {
-            return RespSimpleError("ERR wrong number of arguments for 'rpush' command: ${data.elements.size}")
-        }
-        val startVal = data.elements[2]
-        val endVal = data.elements[3]
-        val lst = dataStore.get(data.elements[1])
-
-        if (lst is RespNull) return RespArray(mutableListOf())
-        if (lst !is RespArray) return RespSimpleError("Provided key doesn't correspond to an array.")
-        val lstSize = lst.elements.size
-        if (startVal !is RespBulkString) return RespSimpleError("Provided start index is not a bulk string.")
-        if (endVal !is RespBulkString) return RespSimpleError("Provided end index is not a bulk string.")
-        if (startVal.value == null) return RespSimpleError("Provided start index is null.")
-        if (endVal.value == null) return RespSimpleError("Provided end index is null.")
-
-        val start =
-            startVal.value.toIntOrNull() ?: return RespSimpleError("Start index is not a valid integer.")
-        val end = endVal.value.toIntOrNull() ?: return RespSimpleError("End index is not a valid integer.")
-
-        val normalizedStart = if (start < 0) (lstSize + start).coerceAtLeast(0) else start.coerceAtMost(lstSize)
-        val normalizedEnd = if (end < 0) (lstSize + end).coerceAtLeast(0) else end.coerceAtMost(lstSize - 1)
-
-        return when {
-            normalizedStart > normalizedEnd -> RespArray(mutableListOf())
-            normalizedStart >= lstSize -> RespArray(mutableListOf())
-            else -> RespArray(lst.elements.subList(normalizedStart, (normalizedEnd + 1)))
-        }
+        return executeRedisCommand(command, context)
     }
 
     private data class CommandRequest(
