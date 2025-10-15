@@ -2,6 +2,8 @@ import io.ktor.network.selector.*
 import io.ktor.network.sockets.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.selects.onTimeout
+import kotlinx.coroutines.selects.select
 import kotlinx.io.EOFException
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
@@ -37,18 +39,25 @@ class RedisServer(
     private suspend fun checkAndHandleTimeouts() {
         val expired = blockedMap.getClientsTimingOutBefore(Instant.now())
         expired.forEach {
-            responseChannels[it]?.send(RespNull)
+            responseChannels[it]?.send(RespNullArray)
         }
-
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     private suspend fun runEventLoop() {
         while (true) {
             checkAndHandleTimeouts()
+            val timeout = blockedMap.getEarliestTimeout()?.deadline ?: Instant.now().plusMillis(100)
+            val timeoutMs = (timeout.toEpochMilli() - Instant.now().toEpochMilli())
 
-            val request = commandChannel.receive()
-            val response = executeCommand(request)
-            if (response is WritableRespValue) request.responseChannel.send(response)
+            val request = select {
+                commandChannel.onReceive { it }
+                onTimeout(timeoutMs) { null }
+            }
+            if (request != null) {
+                val response = executeCommand(request)
+                if (response is WritableRespValue) request.responseChannel.send(response)
+            }
         }
     }
 
@@ -108,19 +117,24 @@ class RedisServer(
                     return RespSimpleError("Expected 3 arguments for 'blpop' command, got: ${data.elements.size}")
                 }
                 val key = data.elements[1]
-
                 val timeout = data.elements[2]
-                if (timeout !is RespInteger) return RespSimpleError("Expected second argument to be integer for blpop")
+                if (timeout !is RespBulkString) return RespSimpleError("Expected second argument to be bulk string for blpop")
+                val timeoutValue = timeout.value?.toLongOrNull()
+                    ?: return RespSimpleError("Expected second argument to be integer for blpop")
 
-                val lst = dataStore.get(key)
-                if (lst is RespNull) return RespNull
-                if (lst !is RespArray) return RespSimpleError("Underlying datastore element is not a list")
+                val lst = when (val item = dataStore.get(key)) {
+                    is RespNull -> null
+                    is RespArray -> item
+                    else -> return RespSimpleError("Underlying datastore element is not a list")
+                }
 
-                // Nothing available - block the client
+                if (lst != null && lst.elements.isNotEmpty()) {
+                    val poppedValue = lst.elements.removeFirst()
+                    return RespArray(mutableListOf(key, poppedValue))
+                }
+
                 val clientId = request.clientId
-                responseChannels[clientId] = request.responseChannel
-                blockedMap.blockClient(clientId, listOf(key), timeout.value)
-
+                blockedMap.blockClient(clientId, listOf(key), timeoutValue)
                 return NoResponse
             }
 
@@ -164,20 +178,30 @@ class RedisServer(
         if (data.elements.size < 3) {
             return RespSimpleError("ERR wrong number of arguments for '${if (left) 'l' else 'r'}push' command: ${data.elements.size}")
         }
-
         checkAndHandleTimeouts()
 
-        var lst = dataStore.get(data.elements[1])
+        val key = data.elements[1]
+        var lst = dataStore.get(key)
         if (lst is RespNull) {
             lst = RespArray(mutableListOf())
-            dataStore.set(data.elements[1], lst)
+            dataStore.set(key, lst)
         }
         if (lst !is RespArray) return RespSimpleError("Provided key doesn't correspond to an array.")
 
         for (el in data.elements.drop(2)) {
             if (left) lst.elements.addFirst(el) else lst.elements.add(el)
         }
-        return RespInteger(lst.elements.size.toLong())
+
+        val finalSize = lst.elements.size.toLong()
+
+        while (lst.elements.isNotEmpty()) {
+            val clientId = blockedMap.getNextClientForKey(key) ?: break
+
+            val poppedValue = lst.elements.removeFirst()
+            responseChannels[clientId]?.send(RespArray(mutableListOf(key, poppedValue)))
+        }
+
+        return RespInteger(finalSize)
     }
 
     private fun executePop(data: RespArray, left: Boolean = false): RespValue {

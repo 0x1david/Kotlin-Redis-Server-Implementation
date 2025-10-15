@@ -14,8 +14,12 @@ class BlockedMap {
     private val clientToKeys: HashMap<String, MutableList<RespValue>> = HashMap()
     private val timeoutQueue: PriorityQueue<TimeoutEntry> = PriorityQueue(compareBy { it.deadline })
 
-    fun blockClient(clientId: String, keys: List<RespValue>, timeoutSec: Long? = null) {
-        if (timeoutSec != null) {
+    fun getEarliestTimeout(): TimeoutEntry? {
+        return timeoutQueue.peek()
+    }
+
+    fun blockClient(clientId: String, keys: List<RespValue>, timeoutSec: Long) {
+        if (timeoutSec != 0.toLong()) {
             val deadline = Instant.now().plusSeconds(timeoutSec)
             timeoutQueue.add(TimeoutEntry(clientId, deadline))
         }
@@ -35,7 +39,6 @@ class BlockedMap {
                 entries.remove(it)
             }
         }
-        // Note: leaves stale entries in timeoutQueue, filtered in getClientsTimingOutBefore
     }
 
     fun getNextClientForKey(key: RespValue): String? {
@@ -48,6 +51,7 @@ class BlockedMap {
         val expired = mutableListOf<String>()
         while (timeoutQueue.isNotEmpty() && timeoutQueue.peek().deadline <= deadline) {
             val entry = timeoutQueue.poll()
+
             // Skip if already unblocked (stale entry)
             if (clientToKeys.containsKey(entry.clientId)) {
                 expired.add(entry.clientId)

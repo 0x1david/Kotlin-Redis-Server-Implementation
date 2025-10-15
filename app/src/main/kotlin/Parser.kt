@@ -25,6 +25,7 @@ data class RespAttributes(val entries: Map<WritableRespValue, WritableRespValue>
 data class RespSet(val entries: Set<WritableRespValue>) : WritableRespValue
 data class RespPush(val entries: List<WritableRespValue>) : WritableRespValue
 data object RespNull : WritableRespValue
+data object RespNullArray : WritableRespValue
 data object NoResponse : RespValue
 
 suspend fun ByteReadChannel.readRespValue(

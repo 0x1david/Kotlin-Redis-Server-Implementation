@@ -20,6 +20,7 @@ suspend fun ByteWriteChannel.writeRespValue(value: WritableRespValue) {
         is RespSet -> writeSet(value.entries)
         is RespPush -> writePush(value.entries)
         is RespNull -> writeNull()
+        is RespNullArray -> writeNullArray()
     }
 }
 
@@ -126,6 +127,12 @@ private suspend fun ByteWriteChannel.writePush(entries: List<WritableRespValue>)
 private suspend fun ByteWriteChannel.writeNull() {
     writeRespValue(RespBulkString(null))
 }
+
+private suspend fun ByteWriteChannel.writeNullArray() {
+    writeStringUtf8("*-1")
+    writeCRLF()
+}
+
 
 private suspend fun ByteWriteChannel.writeCRLF() {
     writeByte('\r'.code.toByte())
