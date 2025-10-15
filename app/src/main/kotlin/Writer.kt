@@ -3,7 +3,7 @@ import io.ktor.utils.io.writeByte
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 
-suspend fun ByteWriteChannel.writeRespValue(value: RespValue) {
+suspend fun ByteWriteChannel.writeRespValue(value: WritableRespValue) {
     when (value) {
         is RespSimpleString -> writeSimpleString(value.value)
         is RespSimpleError -> writeSimpleError(value.message)
@@ -52,7 +52,7 @@ private suspend fun ByteWriteChannel.writeBulkString(value: String?) {
     writeCRLF()
 }
 
-private suspend fun ByteWriteChannel.writeArray(elements: List<RespValue>) {
+private suspend fun ByteWriteChannel.writeArray(elements: List<WritableRespValue>) {
     writeStringUtf8("*${elements.size}")
     writeCRLF()
     elements.forEach { writeRespValue(it) }
@@ -93,7 +93,7 @@ private suspend fun ByteWriteChannel.writeVerbatimString(format: String, value: 
     writeCRLF()
 }
 
-private suspend fun ByteWriteChannel.writeMap(entries: Map<RespValue, RespValue>) {
+private suspend fun ByteWriteChannel.writeMap(entries: Map<WritableRespValue, WritableRespValue>) {
     writeStringUtf8("%${entries.size}")
     writeCRLF()
     entries.forEach { (key, value) ->
@@ -102,7 +102,7 @@ private suspend fun ByteWriteChannel.writeMap(entries: Map<RespValue, RespValue>
     }
 }
 
-private suspend fun ByteWriteChannel.writeAttributes(entries: Map<RespValue, RespValue>) {
+private suspend fun ByteWriteChannel.writeAttributes(entries: Map<WritableRespValue, WritableRespValue>) {
     writeStringUtf8("|${entries.size}")
     writeCRLF()
     entries.forEach { (key, value) ->
@@ -111,13 +111,13 @@ private suspend fun ByteWriteChannel.writeAttributes(entries: Map<RespValue, Res
     }
 }
 
-private suspend fun ByteWriteChannel.writeSet(entries: Set<RespValue>) {
+private suspend fun ByteWriteChannel.writeSet(entries: Set<WritableRespValue>) {
     writeStringUtf8("~${entries.size}")
     writeCRLF()
     entries.forEach { writeRespValue(it) }
 }
 
-private suspend fun ByteWriteChannel.writePush(entries: List<RespValue>) {
+private suspend fun ByteWriteChannel.writePush(entries: List<WritableRespValue>) {
     writeStringUtf8(">${entries.size}")
     writeCRLF()
     entries.forEach { writeRespValue(it) }

@@ -27,7 +27,7 @@ class BlockedMap {
         }
     }
 
-    private fun unblockClient(clientId: String) {
+    fun unblockClient(clientId: String) {
         val keys = clientToKeys.remove(clientId) ?: return
         keys.forEach {
             entries[it]?.remove(clientId)

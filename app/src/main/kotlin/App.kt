@@ -4,6 +4,8 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.io.EOFException
 import java.time.Instant
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 class RedisServer(
     private val host: String = "0.0.0.0",
@@ -12,6 +14,8 @@ class RedisServer(
     private val dataStore = RedisDataStore()
     private val commandChannel = Channel<CommandRequest>(Channel.UNLIMITED)
     private val blockedMap = BlockedMap()
+    private val responseChannels = ConcurrentHashMap<String, Channel<WritableRespValue>>()
+    private val clientIdCounter = AtomicLong(0)
 
     suspend fun start() {
         val selectorManager = SelectorManager(Dispatchers.IO)
@@ -43,12 +47,16 @@ class RedisServer(
             checkAndHandleTimeouts()
 
             val request = commandChannel.receive()
-            val response = executeCommand(request.command)
-            request.responseChannel.send(response)
+            val response = executeCommand(request)
+            if (response is WritableRespValue) request.responseChannel.send(response)
         }
     }
 
     private suspend fun handleClient(socket: Socket) {
+        val clientId = clientIdCounter.getAndIncrement().toString()
+        val responseChannel = Channel<WritableRespValue>(Channel.UNLIMITED)
+        responseChannels[clientId] = responseChannel
+
         socket.use {
             val input = it.openReadChannel()
             val output = it.openWriteChannel(autoFlush = true)
@@ -58,10 +66,12 @@ class RedisServer(
                     val data = input.readRespValue()
                     println("Received: $data")
 
-                    val responseChannel = Channel<RespValue>(1)
-                    commandChannel.send(CommandRequest(data, responseChannel))
+                    commandChannel.send(CommandRequest(data, responseChannel, clientId))
                     val response = responseChannel.receive()
-                    output.writeRespValue(response)
+
+                    if (response != NoResponse) {
+                        output.writeRespValue(response)
+                    }
                 } catch (e: EOFException) {
                     println("Client disconnected")
                     break
@@ -71,9 +81,13 @@ class RedisServer(
                 }
             }
         }
+
+        responseChannels.remove(clientId)
+        blockedMap.unblockClient(clientId)
     }
 
-    private fun executeCommand(request: CommandRequest): RespValue {
+    // Improvement: Split Parsing and Execution
+    private suspend fun executeCommand(request: CommandRequest): RespValue {
         val data = request.command
         if (data !is RespArray) return RespSimpleString("PONG")
 
@@ -90,23 +104,24 @@ class RedisServer(
             "RPOP" -> executePop(data)
             "LPOP" -> executePop(data, true)
             "BLPOP" -> {
-                val keys = request.command.keys
-                val timeout = request.command.timeoutSec
-
-                // Try immediate pop first
-                for (key in keys) {
-                    val value = dataStore.lpop(key)
-                    if (value != null) {
-                        return RespArray(listOf(key, value))
-                    }
+                if (data.elements.size != 3) {
+                    return RespSimpleError("Expected 3 arguments for 'blpop' command, got: ${data.elements.size}")
                 }
+                val key = data.elements[1]
+
+                val timeout = data.elements[2]
+                if (timeout !is RespInteger) return RespSimpleError("Expected second argument to be integer for blpop")
+
+                val lst = dataStore.get(key)
+                if (lst is RespNull) return RespNull
+                if (lst !is RespArray) return RespSimpleError("Underlying datastore element is not a list")
 
                 // Nothing available - block the client
-                val clientId = request.clientId // Need to add this to CommandRequest
+                val clientId = request.clientId
                 responseChannels[clientId] = request.responseChannel
-                blockedMap.blockClient(clientId, keys, timeout)
+                blockedMap.blockClient(clientId, listOf(key), timeout.value)
 
-                return RespValue.NO_RESPONSE // Special marker to skip sending response
+                return NoResponse
             }
 
             "LLEN" -> data.validateAndExecute(2, "llen") {
@@ -145,10 +160,13 @@ class RedisServer(
         return RespSimpleString("OK")
     }
 
-    private fun executePush(data: RespArray, left: Boolean = false): RespValue {
+    private suspend fun executePush(data: RespArray, left: Boolean = false): RespValue {
         if (data.elements.size < 3) {
             return RespSimpleError("ERR wrong number of arguments for '${if (left) 'l' else 'r'}push' command: ${data.elements.size}")
         }
+
+        checkAndHandleTimeouts()
+
         var lst = dataStore.get(data.elements[1])
         if (lst is RespNull) {
             lst = RespArray(mutableListOf())
@@ -218,7 +236,8 @@ class RedisServer(
 
     private data class CommandRequest(
         val command: RespValue,
-        val responseChannel: Channel<RespValue>
+        val responseChannel: Channel<WritableRespValue>,
+        val clientId: String
     )
 }
 

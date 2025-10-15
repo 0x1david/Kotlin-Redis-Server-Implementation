@@ -7,23 +7,25 @@ import java.net.ProtocolException
 private const val VERBATIM_FORMAT_LENGTH = 3 // Per RESP3 spec
 
 sealed interface RespValue
+sealed interface WritableRespValue : RespValue
 
 // https://redis.io/docs/latest/develop/reference/protocol-spec/#arrays
-data class RespSimpleString(val value: String) : RespValue
-data class RespSimpleError(val message: String) : RespValue
-data class RespInteger(val value: Long) : RespValue
-data class RespBulkString(val value: String?) : RespValue
-class RespArray(var elements: MutableList<RespValue>) : RespValue
-data class RespBool(val value: Boolean) : RespValue
-data class RespDouble(val value: Double) : RespValue
-data class RespBigNumber(val value: String) : RespValue
-data class RespBulkError(val message: String) : RespValue
-data class RespVerbatimString(val format: String, val value: String) : RespValue
-data class RespMap(val entries: Map<RespValue, RespValue>) : RespValue
-data class RespAttributes(val entries: Map<RespValue, RespValue>) : RespValue
-data class RespSet(val entries: Set<RespValue>) : RespValue
-data class RespPush(val entries: List<RespValue>) : RespValue
-data object RespNull : RespValue
+data class RespSimpleString(val value: String) : WritableRespValue
+data class RespSimpleError(val message: String) : WritableRespValue
+data class RespInteger(val value: Long) : WritableRespValue
+data class RespBulkString(val value: String?) : WritableRespValue
+class RespArray(var elements: MutableList<WritableRespValue>) : WritableRespValue
+data class RespBool(val value: Boolean) : WritableRespValue
+data class RespDouble(val value: Double) : WritableRespValue
+data class RespBigNumber(val value: String) : WritableRespValue
+data class RespBulkError(val message: String) : WritableRespValue
+data class RespVerbatimString(val format: String, val value: String) : WritableRespValue
+data class RespMap(val entries: Map<WritableRespValue, WritableRespValue>) : WritableRespValue
+data class RespAttributes(val entries: Map<WritableRespValue, WritableRespValue>) : WritableRespValue
+data class RespSet(val entries: Set<WritableRespValue>) : WritableRespValue
+data class RespPush(val entries: List<WritableRespValue>) : WritableRespValue
+data object RespNull : WritableRespValue
+data object NoResponse : RespValue
 
 suspend fun ByteReadChannel.readRespValue(
     maxDepth: Int = 1000,
@@ -42,7 +44,7 @@ class RespParser(
 ) {
     private var currentDepth = 0
 
-    suspend fun readRespPayload(): RespValue {
+    suspend fun readRespPayload(): WritableRespValue {
         checkDepth()
         currentDepth++
         return try {
@@ -93,14 +95,14 @@ class RespParser(
         }
     }
 
-    private suspend fun readRespBool(): RespValue = when (channel.readUTF8Line()) {
+    private suspend fun readRespBool(): WritableRespValue = when (channel.readUTF8Line()) {
         "t" -> RespBool(true)
         "f" -> RespBool(false)
         else -> throw ProtocolException("Invalid boolean")
     }
 
 
-    private suspend fun readRespArray(): RespValue {
+    private suspend fun readRespArray(): WritableRespValue {
         val count = channel.readUTF8Line()?.toIntOrNull() ?: throw ProtocolException("Invalid array length")
         checkCollectionSize(count)
 
@@ -110,7 +112,7 @@ class RespParser(
         return RespArray(arr)
     }
 
-    private suspend fun readRespPush(): RespValue {
+    private suspend fun readRespPush(): WritableRespValue {
         val count = channel.readUTF8Line()?.toIntOrNull() ?: throw ProtocolException("Invalid push length")
         checkCollectionSize(count)
 
@@ -120,7 +122,7 @@ class RespParser(
         return RespPush(arr)
     }
 
-    private suspend fun readRespSet(): RespValue {
+    private suspend fun readRespSet(): WritableRespValue {
         val count = channel.readUTF8Line()?.toIntOrNull() ?: throw ProtocolException("Invalid set length")
         checkCollectionSize(count)
 
@@ -132,7 +134,7 @@ class RespParser(
         return RespSet(set)
     }
 
-    private suspend fun readRespBulkString(): RespValue {
+    private suspend fun readRespBulkString(): WritableRespValue {
         val length = channel.readUTF8Line()?.toInt() ?: throw ProtocolException("Missing length in bulk string")
         if (length == -1) return RespNull
         checkStringLength(length)
@@ -144,7 +146,7 @@ class RespParser(
         return RespBulkString(bytes.decodeToString())
     }
 
-    private suspend fun readRespBulkError(): RespValue {
+    private suspend fun readRespBulkError(): WritableRespValue {
         val length = channel.readUTF8Line()?.toInt() ?: throw ProtocolException("Missing length in bulk error")
         if (length == -1) return RespNull
         checkStringLength(length)
@@ -156,7 +158,7 @@ class RespParser(
         return RespBulkError(bytes.decodeToString())
     }
 
-    private suspend fun readRespVerbatimString(): RespValue {
+    private suspend fun readRespVerbatimString(): WritableRespValue {
         val length = channel.readUTF8Line()?.toInt() ?: throw ProtocolException("Missing length in verbatim string")
         val dataLength = length - VERBATIM_FORMAT_LENGTH - 1
         checkStringLength(dataLength)
@@ -172,7 +174,7 @@ class RespParser(
         return RespVerbatimString(formatBytes.decodeToString(), bytes.decodeToString())
     }
 
-    private suspend fun readRespMap(): RespValue {
+    private suspend fun readRespMap(): WritableRespValue {
         val count = channel.readUTF8Line()?.toIntOrNull() ?: throw ProtocolException("Invalid map length")
         checkCollectionSize(count)
 
@@ -184,7 +186,7 @@ class RespParser(
         return RespMap(entries)
     }
 
-    private suspend fun readRespAttributes(): RespValue {
+    private suspend fun readRespAttributes(): WritableRespValue {
         val count = channel.readUTF8Line()?.toIntOrNull() ?: throw ProtocolException("Invalid attributes length")
         checkCollectionSize(count)
 
