@@ -13,4 +13,5 @@ sealed interface RedisCommand {
     data class BLPop(val key: RespValue, val timeout: Double) : RedisCommand
     data class LLen(val key: RespValue) : RedisCommand
     data class LRange(val key: RespValue, val start: Int, val end: Int) : RedisCommand
+    data class Type(val key: RespValue) : RedisCommand
 }

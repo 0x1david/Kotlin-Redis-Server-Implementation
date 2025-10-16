@@ -22,6 +22,7 @@ suspend fun executeRedisCommand(command: RedisCommand, context: ExecutionContext
         is RedisCommand.BLPop -> executeBLPop(command, context)
         is RedisCommand.LLen -> executeLLen(command, context)
         is RedisCommand.LRange -> executeLRange(command, context)
+        is RedisCommand.Type -> executeType(command, context)
     }
 }
 
@@ -141,6 +142,17 @@ fun executeLLen(command: RedisCommand.LLen, context: ExecutionContext): RespValu
         is RespArray -> RespInteger(item.elements.size.toLong())
         else -> RespInteger(0)
     }
+}
+
+fun executeType(command: RedisCommand.Type, context: ExecutionContext): RespValue {
+    return when (context.dataStore.get(command.key)) {
+        is RespArray -> RespSimpleString("array")
+        is RespSet -> RespSimpleString("set")
+        is RespSimpleString, is RespBulkString -> RespSimpleString("string")
+        is RespNull -> RespSimpleString("none")
+        else -> RespSimpleString("undefined")
+    }
+
 }
 
 fun executeLRange(command: RedisCommand.LRange, context: ExecutionContext): RespValue {

@@ -20,6 +20,7 @@ fun parseCommand(resp: RespValue): Result<RedisCommand> {
         "BLPOP" -> parseBLPop(resp)
         "LLEN" -> parseLLen(resp)
         "LRANGE" -> parseLRange(resp)
+        "TYPE" -> parseType(resp)
         else -> Result.failure(ParseException("ERR unknown command '$commandName'"))
     }
 }
@@ -30,6 +31,13 @@ fun parseEcho(resp: RespArray): Result<RedisCommand.Echo> =
         Result.failure(ParseException("ERR wrong number of arguments for 'echo' command: ${resp.elements.size}"))
     } else {
         Result.success(RedisCommand.Echo(resp.elements[1]))
+    }
+
+fun parseType(resp: RespArray): Result<RedisCommand.Type> =
+    if (resp.elements.size != 2) {
+        Result.failure(ParseException("ERR wrong number of arguments for 'type' command: ${resp.elements.size}"))
+    } else {
+        Result.success(RedisCommand.Type(resp.elements[1]))
     }
 
 fun parseGet(resp: RespArray): Result<RedisCommand.Get> =
