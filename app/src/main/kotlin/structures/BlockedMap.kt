@@ -1,7 +1,7 @@
 import java.time.Instant
 import java.util.PriorityQueue
 
-const val NO_TIMEOUT = 0.toDouble()
+const val NO_TIMEOUT = 0.0
 
 data class TimeoutEntry(
     val clientId: String,

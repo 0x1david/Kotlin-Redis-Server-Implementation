@@ -23,6 +23,7 @@ suspend fun executeRedisCommand(command: RedisCommand, context: ExecutionContext
         is RedisCommand.LLen -> executeLLen(command, context)
         is RedisCommand.LRange -> executeLRange(command, context)
         is RedisCommand.Type -> executeType(command, context)
+        is RedisCommand.XAdd -> throw Error("Not ye")
     }
 }
 

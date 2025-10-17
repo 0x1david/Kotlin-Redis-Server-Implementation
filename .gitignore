@@ -152,3 +152,6 @@ local.properties
 
 # Google/Firebase secrets
 google-services.json
+
+
+rewrite.sh
