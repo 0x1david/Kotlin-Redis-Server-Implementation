@@ -21,10 +21,29 @@ fun parseCommand(resp: RespValue): Result<RedisCommand> {
         "LLEN" -> parseLLen(resp)
         "LRANGE" -> parseLRange(resp)
         "TYPE" -> parseType(resp)
+        "XADD" -> parseXAdd(resp)
         else -> Result.failure(ParseException("ERR unknown command '$commandName'"))
     }
 }
 
+
+fun parseXAdd(resp: RespArray): Result<RedisCommand.XAdd> {
+    val size = resp.elements.size
+    if (size < 5) return Result.failure(ParseException("ERR wrong number of arguments for 'xadd' command: $size"))
+    if (size % 2 == 0) return Result.failure(ParseException("ERR wrong number of arguments for 'xadd' command: $size"))
+    val id = resp.elements[2] as? RespBulkString
+        ?: return Result.failure(ParseException("ERR expected bulk string id as second argument for 'xadd' command: $size"))
+
+    val params = (3 until size step 2).map {
+        val field = resp.elements[it] as? RespBulkString
+            ?: return Result.failure(ParseException("ERR unexpected arguments to 'xadd' command: $size"))
+        val value = resp.elements[it + 1] as? RespBulkString
+            ?: return Result.failure(ParseException("ERR unexpected arguments to 'xadd' command: $size"))
+        (field.value!! to value.value!!.toByteArray())
+    }
+
+    return Result.success(RedisCommand.XAdd(resp.elements[1], id.value, params))
+}
 
 fun parseEcho(resp: RespArray): Result<RedisCommand.Echo> =
     if (resp.elements.size != 2) {

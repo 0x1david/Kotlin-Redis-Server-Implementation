@@ -14,5 +14,5 @@ sealed interface RedisCommand {
     data class LLen(val key: RespValue) : RedisCommand
     data class LRange(val key: RespValue, val start: Int, val end: Int) : RedisCommand
     data class Type(val key: RespValue) : RedisCommand
-    data class XAdd(val key: RespValue) : RedisCommand
+    data class XAdd(val key: RespValue, val id: String?, val args: List<Pair<String, ByteArray>>) : RedisCommand
 }

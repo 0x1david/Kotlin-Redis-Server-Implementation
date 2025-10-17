@@ -24,6 +24,7 @@ data class RespMap(val entries: Map<WritableRespValue, WritableRespValue>) : Wri
 data class RespAttributes(val entries: Map<WritableRespValue, WritableRespValue>) : WritableRespValue
 data class RespSet(val entries: Set<WritableRespValue>) : WritableRespValue
 data class RespPush(val entries: List<WritableRespValue>) : WritableRespValue
+data class RespStream(val stream: RedisStream = RedisStream()) : RespValue
 data object RespNull : WritableRespValue
 data object RespNullArray : WritableRespValue
 data object NoResponse : RespValue

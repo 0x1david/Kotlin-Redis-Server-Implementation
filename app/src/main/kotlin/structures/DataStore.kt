@@ -19,6 +19,17 @@ class RedisDataStore {
         return value.value
     }
 
+    fun getOrPut(k: RespValue, defaultValue: () -> RespValue): RespValue {
+        val value = data[k]
+        if (value == null || value.expiry?.isBefore(Instant.now()) == true) {
+            data.remove(k)
+            val newValue = defaultValue()
+            data[k] = DataStoreValue(newValue, null)
+            return newValue
+        }
+        return value.value
+    }
+
     fun set(k: RespValue, v: RespValue, p: DataStoreParams? = null) {
         val expiry = p?.expiryMs?.let { Instant.now().plus(Duration.ofMillis(it)) }
         data[k] = DataStoreValue(v, expiry)

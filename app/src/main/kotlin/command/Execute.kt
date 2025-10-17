@@ -23,14 +23,20 @@ suspend fun executeRedisCommand(command: RedisCommand, context: ExecutionContext
         is RedisCommand.LLen -> executeLLen(command, context)
         is RedisCommand.LRange -> executeLRange(command, context)
         is RedisCommand.Type -> executeType(command, context)
-        is RedisCommand.XAdd -> throw Error("Not ye")
+        is RedisCommand.XAdd -> executeXAdd(command, context)
     }
+}
+
+fun executeXAdd(command: RedisCommand.XAdd, context: ExecutionContext): RespValue {
+    val stream = context.dataStore.getOrPut(command.key) { RespStream() } as? RespStream
+        ?: return RespSimpleError("Provided key doesn't correspond to a stream.")
+    stream.stream.add(StreamId.parse(command.id!!), command.args.toMap())
+    return RespBulkString(command.id)
 }
 
 fun executePing(): RespValue = RespSimpleString("PONG")
 
-fun executeEcho(command: RedisCommand.Echo): RespValue =
-    command.message
+fun executeEcho(command: RedisCommand.Echo): RespValue = command.message
 
 fun executeGet(command: RedisCommand.Get, context: ExecutionContext): RespValue =
     context.dataStore.get(command.key)
@@ -151,6 +157,7 @@ fun executeType(command: RedisCommand.Type, context: ExecutionContext): RespValu
         is RespSet -> RespSimpleString("set")
         is RespSimpleString, is RespBulkString -> RespSimpleString("string")
         is RespNull -> RespSimpleString("none")
+        is RespStream -> RespSimpleString("stream")
         else -> RespSimpleString("undefined")
     }
 

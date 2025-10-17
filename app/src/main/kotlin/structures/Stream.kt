@@ -1,5 +1,22 @@
 import java.nio.ByteBuffer
 
+class RedisStream(
+    private val trie: StreamTrie = StreamTrie()
+) {
+
+    fun add(
+        id: StreamId,
+        fields: Map<String, ByteArray>
+    ): StreamId {
+        val entry = StreamEntry(id, fields)
+        trie.insert(entry)
+        return id
+    }
+
+    fun len(): Int = trie.size()
+
+}
+
 data class StreamEntry(
     val id: StreamId,
     val fields: Map<String, ByteArray>
