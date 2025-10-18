@@ -186,7 +186,7 @@ fun executeXAdd(command: RedisCommand.XAdd, context: ExecutionContext): RespValu
     val stream = context.dataStore.getOrPut(command.key) { RespStream() } as? RespStream
         ?: return RespSimpleError("Provided key doesn't correspond to a stream.")
     return stream.stream
-        .add(StreamId.parse(command.id!!), command.args.toMap())
-        .map { RespBulkString(command.id) }
+        .add(command.id!!, command.args.toMap())
+        .map { RespBulkString(it.toString()) }
         .getOrElse { RespSimpleError(it.message ?: "System Err") }
 }
