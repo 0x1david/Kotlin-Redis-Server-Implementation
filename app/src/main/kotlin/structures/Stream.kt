@@ -1,16 +1,21 @@
 import java.nio.ByteBuffer
 
+
 class RedisStream(
     private val trie: StreamTrie = StreamTrie()
 ) {
+    private var lastInserted = StreamId(0uL, 0uL)
 
-    fun add(
-        id: StreamId,
-        fields: Map<String, ByteArray>
-    ): StreamId {
+    fun add(id: StreamId, fields: Map<String, ByteArray>): Result<StreamId> {
+        if (id.timestampMs == 0uL && id.sequence == 0uL) return Result.failure(IllegalArgumentException("ERR The ID specified in XADD must be greater than 0-0"))
+        if (id.timestampMs < lastInserted.timestampMs || (id.timestampMs == lastInserted.timestampMs && id.sequence <= lastInserted.sequence)) return Result.failure(
+            IllegalArgumentException("ERR The ID specified in XADD is equal or smaller than the target stream top item")
+        )
+        lastInserted = id
+
         val entry = StreamEntry(id, fields)
         trie.insert(entry)
-        return id
+        return Result.success(id)
     }
 
     fun len(): Int = trie.size()

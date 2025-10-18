@@ -27,12 +27,6 @@ suspend fun executeRedisCommand(command: RedisCommand, context: ExecutionContext
     }
 }
 
-fun executeXAdd(command: RedisCommand.XAdd, context: ExecutionContext): RespValue {
-    val stream = context.dataStore.getOrPut(command.key) { RespStream() } as? RespStream
-        ?: return RespSimpleError("Provided key doesn't correspond to a stream.")
-    stream.stream.add(StreamId.parse(command.id!!), command.args.toMap())
-    return RespBulkString(command.id)
-}
 
 fun executePing(): RespValue = RespSimpleString("PONG")
 
@@ -186,4 +180,13 @@ fun executeLRange(command: RedisCommand.LRange, context: ExecutionContext): Resp
         normalizedStart >= lstSize -> RespArray(mutableListOf())
         else -> RespArray(lst.elements.subList(normalizedStart, normalizedEnd + 1))
     }
+}
+
+fun executeXAdd(command: RedisCommand.XAdd, context: ExecutionContext): RespValue {
+    val stream = context.dataStore.getOrPut(command.key) { RespStream() } as? RespStream
+        ?: return RespSimpleError("Provided key doesn't correspond to a stream.")
+    return stream.stream
+        .add(StreamId.parse(command.id!!), command.args.toMap())
+        .map { RespBulkString(command.id) }
+        .getOrElse { RespSimpleError(it.message ?: "System Err") }
 }
