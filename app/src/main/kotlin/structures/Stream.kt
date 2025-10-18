@@ -24,13 +24,15 @@ class RedisStream(
     fun len(): Int = trie.size()
 
     fun parseOrGenerateId(idString: String): StreamId? {
+        if (idString == "*") {
+            val timestampMs = System.currentTimeMillis().toULong()
+            return StreamId(timestampMs, generateSequence(timestampMs))
+        }
+
         val parts = idString.split("-")
         require(parts.size == 2) { "Invalid StreamId format" }
 
-        val timestampMs = when (parts[0]) {
-            "*" -> throw NotImplementedError("Not yet")
-            else -> parts[0].toULongOrNull() ?: return null
-        }
+        val timestampMs = parts[0].toULongOrNull() ?: return null
         val sequence = when (parts[1]) {
             "*" -> generateSequence(timestampMs)
             else -> parts[1].toULongOrNull() ?: return null
