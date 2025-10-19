@@ -23,17 +23,32 @@ class RedisStream(
     }
 
     fun range(start: String, end: String): Result<RespArray> = runCatching {
-        val (startTime, startSeq) = start.split("-", limit = 2)
-            .let { it[0].toULong() to (it.getOrNull(1)?.toULongOrNull() ?: 0u) }
+        val startId = when (start) {
+            "-" -> null
+            else -> {
+                val (startTime, startSeq) = start.split("-", limit = 2)
+                    .let { it[0].toULong() to (it.getOrNull(1)?.toULongOrNull() ?: 0u) }
+                StreamId(startTime, startSeq)
+            }
+        }
 
-        val (endTime, endSeq) = end.split("-", limit = 2)
-            .let { it[0].toULong() to (it.getOrNull(1)?.toULongOrNull() ?: ULong.MAX_VALUE) }
+        val endId = when (end) {
+            "+" -> null
+            else -> {
+                val (endTime, endSeq) = end.split("-", limit = 2)
+                    .let { it[0].toULong() to (it.getOrNull(1)?.toULongOrNull() ?: ULong.MAX_VALUE) }
+                StreamId(endTime, endSeq)
+            }
+        }
 
-        val startId = StreamId(startTime, startSeq)
-        val endId = StreamId(endTime, endSeq)
-        RespArray(
-            trie.rangeQuery(startId, endId).map { it.toRespArray() }.toMutableList()
-        )
+        val result = when {
+            startId == null && endId == null -> trie.rangeQuery()
+            startId == null -> trie.rangeQuery(end = endId!!)
+            endId == null -> trie.rangeQuery(start = startId)
+            else -> trie.rangeQuery(startId, endId)
+        }
+
+        RespArray(result.map { it.toRespArray() }.toMutableList())
     }
 
     fun len(): Int = trie.size()

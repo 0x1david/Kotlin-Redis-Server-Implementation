@@ -30,10 +30,10 @@ class StreamTrie {
         return existed
     }
 
-    fun rangeQuery(start: StreamId, end: StreamId): Sequence<StreamEntry> =
+    fun rangeQuery(start: StreamId = MIN_STREAM_ID, end: StreamId = MAX_STREAM_ID): Sequence<StreamEntry> =
         sequence { collectRange(root, ByteArray(0), start.toBytes(), end.toBytes()) }
 
-    fun rangeQuery(start: StreamId, end: StreamId, count: Int): List<StreamEntry> =
+    fun rangeQuery(start: StreamId = MIN_STREAM_ID, end: StreamId = MAX_STREAM_ID, count: Int): List<StreamEntry> =
         rangeQuery(start, end).take(count).toList()
 
 
