@@ -24,6 +24,7 @@ suspend fun executeRedisCommand(command: RedisCommand, context: ExecutionContext
         is RedisCommand.LRange -> executeLRange(command, context)
         is RedisCommand.Type -> executeType(command, context)
         is RedisCommand.XAdd -> executeXAdd(command, context)
+        is RedisCommand.XRange -> executeXRange(command, context)
     }
 }
 
@@ -189,4 +190,13 @@ fun executeXAdd(command: RedisCommand.XAdd, context: ExecutionContext): RespValu
         .add(command.id!!, command.args.toMap())
         .map { RespBulkString(it.toString()) }
         .getOrElse { RespSimpleError(it.message ?: "System Err") }
+}
+
+fun executeXRange(command: RedisCommand.XRange, context: ExecutionContext): RespValue {
+    val stream = context.dataStore.get(command.key) as? RespStream
+        ?: return RespSimpleError("Provided key doesn't correspond to a stream.")
+    return stream.stream.range(command.start, command.end).getOrElse {
+        return RespSimpleError(it.message!!)
+    }
+
 }

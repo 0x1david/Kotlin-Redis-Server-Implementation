@@ -22,6 +22,7 @@ fun parseCommand(resp: RespValue): Result<RedisCommand> {
         "LRANGE" -> parseLRange(resp)
         "TYPE" -> parseType(resp)
         "XADD" -> parseXAdd(resp)
+        "XRANGE" -> parseXRange(resp)
         else -> Result.failure(ParseException("ERR unknown command '$commandName'"))
     }
 }
@@ -36,13 +37,28 @@ fun parseXAdd(resp: RespArray): Result<RedisCommand.XAdd> {
 
     val params = (3 until size step 2).map {
         val field = resp.elements[it] as? RespBulkString
-            ?: return Result.failure(ParseException("ERR unexpected arguments to 'xadd' command: $size"))
+            ?: return Result.failure(ParseException("ERR unexpected argument to 'xadd' command: ${resp.elements[it]}"))
         val value = resp.elements[it + 1] as? RespBulkString
-            ?: return Result.failure(ParseException("ERR unexpected arguments to 'xadd' command: $size"))
+            ?: return Result.failure(ParseException("ERR unexpected argument to 'xadd' command: ${resp.elements[it + 1]}"))
         (field.value!! to value.value!!.toByteArray())
     }
 
     return Result.success(RedisCommand.XAdd(resp.elements[1], id.value, params))
+}
+
+fun parseXRange(resp: RespArray): Result<RedisCommand.XRange> {
+    val size = resp.elements.size
+    if (size != 4) return Result.failure(ParseException("ERR wrong number of arguments for 'xadd' command: $size"))
+    val key = resp.elements[1] as? RespBulkString
+        ?: return Result.failure(ParseException("ERR expected bulk string id as second argument for 'xadd' command: $size"))
+
+    val start = resp.elements[2] as? RespBulkString
+        ?: return Result.failure(ParseException("ERR expected bulk string start id as second argument for 'xadd' command: $size"))
+
+    val end = resp.elements[3] as? RespBulkString
+        ?: return Result.failure(ParseException("ERR expected bulk string end idas second argument for 'xadd' command: $size"))
+
+    return Result.success(RedisCommand.XRange(key, start.value!!, end.value!!))
 }
 
 fun parseEcho(resp: RespArray): Result<RedisCommand.Echo> =

@@ -1,4 +1,5 @@
 import java.nio.ByteBuffer
+import java.util.stream.Stream
 
 
 class RedisStream(
@@ -19,6 +20,20 @@ class RedisStream(
         val entry = StreamEntry(parsedId, fields)
         trie.insert(entry)
         return Result.success(parsedId)
+    }
+
+    fun range(start: String, end: String): Result<RespArray> = runCatching {
+        val (startTime, startSeq) = start.split("-", limit = 2)
+            .let { it[0].toULong() to (it.getOrNull(1)?.toULongOrNull() ?: 0u) }
+
+        val (endTime, endSeq) = end.split("-", limit = 2)
+            .let { it[0].toULong() to (it.getOrNull(1)?.toULongOrNull() ?: ULong.MAX_VALUE) }
+
+        val startId = StreamId(startTime, startSeq)
+        val endId = StreamId(endTime, endSeq)
+        RespArray(
+            trie.rangeQuery(startId, endId).map { it.toRespArray() }.toMutableList()
+        )
     }
 
     fun len(): Int = trie.size()
@@ -53,7 +68,19 @@ class RedisStream(
 data class StreamEntry(
     val id: StreamId,
     val fields: Map<String, ByteArray>
-)
+) {
+
+
+    fun toRespArray(): RespArray {
+        val id = RespBulkString(this.id.toString())
+        val fields = RespArray(
+            this.fields.flatMap { (key, value) ->
+                listOf(RespBulkString(key), RespBulkString(value.decodeToString()))
+            }.toMutableList()
+        )
+        return RespArray(mutableListOf(id, fields))
+    }
+}
 
 
 data class StreamId(
