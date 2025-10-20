@@ -63,21 +63,38 @@ fun parseXRange(resp: RespArray): Result<RedisCommand.XRange> {
 }
 
 fun parseXRead(resp: RespArray): Result<RedisCommand.XRead> {
-    val size = resp.elements.size
-    if (size < 4 || size % 2 != 0) return Result.failure(ParseException("ERR wrong number of arguments for 'xread' command"))
+    fun <T> Iterator<T>.nextOrNull(): T? = if (hasNext()) next() else null
+    val tokens = resp.elements.iterator()
+    tokens.next()
 
-    if ((resp.elements[1] as? RespBulkString)?.value?.uppercase() != "STREAMS") {
-        return Result.failure(ParseException("ERR syntax error, STREAMS required"))
+    var blockTimeout: Double? = null
+
+    var next = (tokens.nextOrNull() as? RespBulkString)?.value
+        ?: return Result.failure(ParseException("ERR syntax error"))
+
+    if (next.uppercase() == "BLOCK") {
+        blockTimeout = (tokens.nextOrNull() as? RespBulkString)?.value?.toDoubleOrNull()
+            ?: return Result.failure(ParseException("ERR timeout is not an integer or out of range"))
+        next = (tokens.nextOrNull() as? RespBulkString)?.value
+            ?: return Result.failure(ParseException("ERR syntax error"))
     }
 
-    val midIdx = (size) / 2 + 1
-    val keysToStarts = (2 until midIdx).zip((midIdx until size)).map {
-        resp.elements[it.first] to ((resp.elements[it.second] as? RespBulkString)?.value
-            ?: return Result.failure(ParseException("ERR wrong number of arguments for streamed 'xread' command: $size")))
+    if (next.uppercase() != "STREAMS") return Result.failure(ParseException("ERR syntax error, STREAMS required"))
+
+    val remaining = tokens.asSequence().toList()
+    if (remaining.size < 2 || remaining.size % 2 != 0) return Result.failure(ParseException("ERR unbalanced streams"))
+
+
+    val keysToStarts = remaining.chunked(remaining.size / 2).let { (keys, ids) ->
+        keys.zip(ids).map { (key, id) ->
+            key to ((id as? RespBulkString)?.value
+                ?: return Result.failure(ParseException("ERR invalid stream ID")))
+        }
     }
 
-    return Result.success(RedisCommand.XRead(keysToStarts))
+    return Result.success(RedisCommand.XRead(keysToStarts, blockTimeout))
 }
+
 
 fun parseEcho(resp: RespArray): Result<RedisCommand.Echo> =
     if (resp.elements.size != 2) {

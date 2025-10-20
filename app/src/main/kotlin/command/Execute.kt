@@ -42,6 +42,7 @@ fun executeSet(command: RedisCommand.Set, context: ExecutionContext): RespValue 
     return RespSimpleString("OK")
 }
 
+
 suspend fun executeRPush(command: RedisCommand.RPush, context: ExecutionContext): RespValue {
     context.checkTimeouts()
 
@@ -60,9 +61,9 @@ suspend fun executeRPush(command: RedisCommand.RPush, context: ExecutionContext)
     val finalSize = lst.elements.size.toLong()
 
     while (lst.elements.isNotEmpty()) {
-        val clientId = context.blockedMap.getNextClientForKey(key) ?: break
+        val blockedClient = context.blockedMap.getNextClientForKey(key) ?: break
         val poppedValue = lst.elements.removeFirst()
-        context.responseChannels[clientId]?.send(RespArray(mutableListOf(key, poppedValue)))
+        context.responseChannels[blockedClient.clientId]?.send(RespArray(mutableListOf(key, poppedValue)))
     }
 
     return RespInteger(finalSize)
@@ -86,9 +87,9 @@ suspend fun executeLPush(command: RedisCommand.LPush, context: ExecutionContext)
     val finalSize = lst.elements.size.toLong()
 
     while (lst.elements.isNotEmpty()) {
-        val clientId = context.blockedMap.getNextClientForKey(key) ?: break
+        val blockedClient = context.blockedMap.getNextClientForKey(key) ?: break
         val poppedValue = lst.elements.removeFirst()
-        context.responseChannels[clientId]?.send(RespArray(mutableListOf(key, poppedValue)))
+        context.responseChannels[blockedClient.clientId]?.send(RespArray(mutableListOf(key, poppedValue)))
     }
 
     return RespInteger(finalSize)
@@ -136,7 +137,12 @@ fun executeBLPop(command: RedisCommand.BLPop, context: ExecutionContext): RespVa
         return RespArray(mutableListOf(command.key as WritableRespValue, poppedValue))
     }
 
-    context.blockedMap.blockClient(context.clientId, listOf(command.key), command.timeout)
+    context.blockedMap.blockClient(
+        context.clientId,
+        listOf(command.key),
+        command = command,
+        timeoutSec = command.timeout
+    )
     return NoResponse
 }
 
@@ -184,13 +190,38 @@ fun executeLRange(command: RedisCommand.LRange, context: ExecutionContext): Resp
     }
 }
 
-fun executeXAdd(command: RedisCommand.XAdd, context: ExecutionContext): RespValue {
+suspend fun executeXAdd(command: RedisCommand.XAdd, context: ExecutionContext): RespValue {
+    context.checkTimeouts()
+
     val stream = context.dataStore.getOrPut(command.key) { RespStream() } as? RespStream
         ?: return RespSimpleError("Provided key doesn't correspond to a stream.")
-    return stream.stream
+
+    val result = stream.stream
         .add(command.id!!, command.args.toMap())
         .map { RespBulkString(it.toString()) }
-        .getOrElse { RespSimpleError(it.message ?: "System Err") }
+        .getOrElse { return RespSimpleError(it.message ?: "System Err") }
+
+    val blockedClient = context.blockedMap.getNextClientForKey(command.key) ?: return result
+
+    when (val cmd = blockedClient.command) {
+        is RedisCommand.XRead -> {
+            val responses = cmd.keysToStarts.mapNotNull { (key, start) ->
+                val streamData = context.dataStore.get(key) as? RespStream ?: return@mapNotNull null
+                val entries = streamData.stream.range(start, startExcl = true).getOrThrow()
+                if (entries.elements.isEmpty()) null
+                else RespArray(mutableListOf(key as WritableRespValue, entries))
+            }
+            if (responses.isNotEmpty()) {
+                context.responseChannels[blockedClient.clientId]?.send(
+                    RespArray(responses.toMutableList())
+                )
+            }
+        }
+
+        else -> {}
+    }
+
+    return result
 }
 
 fun executeXRange(command: RedisCommand.XRange, context: ExecutionContext): RespValue {
@@ -201,17 +232,26 @@ fun executeXRange(command: RedisCommand.XRange, context: ExecutionContext): Resp
     }
 }
 
-fun executeXRead(command: RedisCommand.XRead, context: ExecutionContext): RespValue {
+suspend fun executeXRead(command: RedisCommand.XRead, context: ExecutionContext): RespValue {
+    context.checkTimeouts()
+
     for ((key, _) in command.keysToStarts) {
-        if (context.dataStore.get(key) !is RespStream) {
+        val value = context.dataStore.get(key)
+        if (value !is RespNull && value !is RespStream) {
             return RespSimpleError("WRONGTYPE Operation against a key holding the wrong kind of value")
         }
     }
 
-    val results = command.keysToStarts.map { (key, start) ->
-        val stream = context.dataStore.get(key) as RespStream
+    val results = command.keysToStarts.mapNotNull { (key, start) ->
+        val stream = context.dataStore.get(key) as? RespStream ?: return@mapNotNull null
         val entries = stream.stream.range(start, startExcl = true).getOrThrow()
-        RespArray(mutableListOf(key as WritableRespValue, entries))
+        if (entries.elements.isEmpty()) null
+        else RespArray(mutableListOf(key as WritableRespValue, entries))
     }
-    return RespArray(results.toMutableList())
+
+    if (results.isNotEmpty() || command.timeout == null) return RespArray(results.toMutableList())
+
+    val keys = command.keysToStarts.map { it.first }
+    context.blockedMap.blockClient(context.clientId, keys, timeoutSec = command.timeout / 1000.0, command = command)
+    return NoResponse
 }

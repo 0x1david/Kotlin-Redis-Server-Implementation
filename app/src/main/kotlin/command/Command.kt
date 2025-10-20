@@ -16,5 +16,5 @@ sealed interface RedisCommand {
     data class Type(val key: RespValue) : RedisCommand
     data class XAdd(val key: RespValue, val id: String?, val args: List<Pair<String, ByteArray>>) : RedisCommand
     data class XRange(val key: RespValue, val start: String, val end: String) : RedisCommand
-    data class XRead(val keysToStarts: List<Pair<RespValue, String>>) : RedisCommand
+    data class XRead(val keysToStarts: List<Pair<RespValue, String>>, val timeout: Double?) : RedisCommand
 }

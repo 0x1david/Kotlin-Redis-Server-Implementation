@@ -39,9 +39,14 @@ class RedisServer(
     private suspend fun checkAndHandleTimeouts() {
         val expired = blockedMap.getClientsTimingOutBefore(Instant.now())
         expired.forEach {
-            responseChannels[it]?.send(RespNullArray)
+            when (it.command) {
+                is RedisCommand.XRead, is RedisCommand.BLPop -> responseChannels[it.clientId]?.send(RespNullArray)
+                else -> responseChannels[it.clientId]?.send(RespNull)
+
+            }
         }
     }
+
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private suspend fun runEventLoop() {
@@ -54,6 +59,7 @@ class RedisServer(
                 commandChannel.onReceive { it }
                 onTimeout(timeoutMs) { null }
             }
+
             if (request != null) {
                 val response = executeCommand(request)
                 if (response is WritableRespValue) request.responseChannel.send(response)
