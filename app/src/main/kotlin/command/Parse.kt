@@ -23,6 +23,7 @@ fun parseCommand(resp: RespValue): Result<RedisCommand> {
         "TYPE" -> parseType(resp)
         "XADD" -> parseXAdd(resp)
         "XRANGE" -> parseXRange(resp)
+        "XREAD" -> parseXRead(resp)
         else -> Result.failure(ParseException("ERR unknown command '$commandName'"))
     }
 }
@@ -59,6 +60,23 @@ fun parseXRange(resp: RespArray): Result<RedisCommand.XRange> {
         ?: return Result.failure(ParseException("ERR expected bulk string end idas second argument for 'xadd' command: $size"))
 
     return Result.success(RedisCommand.XRange(key, start.value!!, end.value!!))
+}
+
+fun parseXRead(resp: RespArray): Result<RedisCommand.XRead> {
+    val size = resp.elements.size
+    if (size < 4 || size % 2 != 0) return Result.failure(ParseException("ERR wrong number of arguments for 'xread' command"))
+
+    if ((resp.elements[1] as? RespBulkString)?.value?.uppercase() != "STREAMS") {
+        return Result.failure(ParseException("ERR syntax error, STREAMS required"))
+    }
+
+    val midIdx = (size) / 2 + 1
+    val keysToStarts = (2 until midIdx).zip((midIdx until size)).map {
+        resp.elements[it.first] to ((resp.elements[it.second] as? RespBulkString)?.value
+            ?: return Result.failure(ParseException("ERR wrong number of arguments for streamed 'xread' command: $size")))
+    }
+
+    return Result.success(RedisCommand.XRead(keysToStarts))
 }
 
 fun parseEcho(resp: RespArray): Result<RedisCommand.Echo> =

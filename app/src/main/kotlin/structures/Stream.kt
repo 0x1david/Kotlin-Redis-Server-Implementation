@@ -22,34 +22,44 @@ class RedisStream(
         return Result.success(parsedId)
     }
 
-    fun range(start: String, end: String): Result<RespArray> = runCatching {
-        val startId = when (start) {
-            "-" -> null
-            else -> {
-                val (startTime, startSeq) = start.split("-", limit = 2)
-                    .let { it[0].toULong() to (it.getOrNull(1)?.toULongOrNull() ?: 0u) }
-                StreamId(startTime, startSeq)
+    // TODO(dbo): This logic should be probably moved out of stream and to execute layer
+    fun range(
+        start: String,
+        end: String? = null,
+        startExcl: Boolean = false,
+        endExcl: Boolean = false
+    ): Result<RespArray> =
+        runCatching {
+            val startId = when (start) {
+                "-" -> null
+                else -> {
+                    val (startTime, startSeq) = start.split("-", limit = 2)
+                        .let { it[0].toULong() to (it.getOrNull(1)?.toULongOrNull() ?: 0u) }
+                    val sid = StreamId(startTime, startSeq)
+                    if (startExcl) sid.next() else sid
+                }
             }
-        }
 
-        val endId = when (end) {
-            "+" -> null
-            else -> {
-                val (endTime, endSeq) = end.split("-", limit = 2)
-                    .let { it[0].toULong() to (it.getOrNull(1)?.toULongOrNull() ?: ULong.MAX_VALUE) }
-                StreamId(endTime, endSeq)
+            val endId = when (end) {
+                "+", null -> null
+                else -> {
+                    val (endTime, endSeq) = end.split("-", limit = 2)
+                        .let { it[0].toULong() to (it.getOrNull(1)?.toULongOrNull() ?: ULong.MAX_VALUE) }
+                    val sid = StreamId(endTime, endSeq)
+                    if (endExcl) sid.prev() else sid
+                }
             }
+
+            val result = when {
+                startId == null && endId == null -> trie.rangeQuery()
+                startId == null -> trie.rangeQuery(end = endId!!)
+                endId == null -> trie.rangeQuery(start = startId)
+                else -> trie.rangeQuery(startId, endId)
+            }
+
+            RespArray(result.map { it.toRespArray() }.toMutableList())
         }
 
-        val result = when {
-            startId == null && endId == null -> trie.rangeQuery()
-            startId == null -> trie.rangeQuery(end = endId!!)
-            endId == null -> trie.rangeQuery(start = startId)
-            else -> trie.rangeQuery(startId, endId)
-        }
-
-        RespArray(result.map { it.toRespArray() }.toMutableList())
-    }
 
     fun len(): Int = trie.size()
 
@@ -116,6 +126,15 @@ data class StreamId(
         val cmp = timestampMs.compareTo(other.timestampMs)
         if (cmp != 0) return cmp
         return sequence.compareTo(other.sequence)
+    }
+
+    fun next(): StreamId =
+        if (sequence < ULong.MAX_VALUE) StreamId(timestampMs, sequence + 1u) else StreamId(timestampMs + 1u, 0u)
+
+    fun prev(): StreamId = when {
+        sequence > 0u -> StreamId(timestampMs, sequence - 1u)
+        timestampMs > 0u -> StreamId(timestampMs - 1u, ULong.MAX_VALUE)
+        else -> this
     }
 
     companion object {

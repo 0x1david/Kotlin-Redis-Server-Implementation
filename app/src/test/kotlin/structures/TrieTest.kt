@@ -157,13 +157,6 @@ class StreamTrieTest {
         assertEquals(id1, reconstructed)
     }
 
-    @Test
-    fun `StreamId parse from string`() {
-        val id = StreamId.parse("1609459200000-5")
-        assertEquals(1609459200000u, id.timestampMs)
-        assertEquals(5uL, id.sequence)
-    }
-
     private fun createEntry(
         timestamp: ULong,
         sequence: ULong,

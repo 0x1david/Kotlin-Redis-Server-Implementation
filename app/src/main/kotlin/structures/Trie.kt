@@ -143,4 +143,54 @@ class StreamTrie {
     }
 
     private data class DeleteResult(val existed: Boolean, val canRemove: Boolean)
+
+    fun debugPrint() {
+        println("StreamTrie Debug (size: $size)")
+        println("=".repeat(50))
+        debugPrintRecursive(root, "", 0)
+    }
+
+    private fun debugPrintRecursive(node: TrieNode, prefix: String, depth: Int) {
+        if (node.value != null) {
+            println("$prefix└─ [LEAF] ${node.value!!.id} -> ${node.value!!.fields}")
+        }
+
+        val sortedChildren = node.children.entries.sortedBy { it.key.toInt() and 0xFF }
+        sortedChildren.forEachIndexed { index, (byte, child) ->
+            val isLast = index == sortedChildren.size - 1
+            val connector = if (isLast) "└─" else "├─"
+            val childPrefix = if (isLast) "   " else "│  "
+
+            val byteHex = String.format("%02X", byte.toInt() and 0xFF)
+            val pathBytes = depth + 1
+            val status = if (child.value != null) "[VALUE]" else "[NODE]"
+
+            println("$prefix$connector $status byte[$pathBytes]: 0x$byteHex")
+            debugPrintRecursive(child, prefix + childPrefix, depth + 1)
+        }
+    }
+
+    fun debugPrintCompact() {
+        println("StreamTrie Contents (size: $size)")
+        iterator().asSequence().forEachIndexed { index, entry ->
+            println("[$index] ${entry.id} -> ${entry.fields}")
+        }
+    }
+
+    fun debugPrintPaths() {
+        println("StreamTrie Paths (size: $size)")
+        debugPrintPathsRecursive(root, ByteArray(0))
+    }
+
+    private fun debugPrintPathsRecursive(node: TrieNode, currentPath: ByteArray) {
+        if (node.value != null) {
+            val hexPath = currentPath.joinToString("") { String.format("%02X", it.toInt() and 0xFF) }
+            println("$hexPath -> ${node.value!!.id} (${node.value!!.fields})")
+        }
+
+        node.children.entries.sortedBy { it.key.toInt() and 0xFF }.forEach { (byte, child) ->
+            debugPrintPathsRecursive(child, currentPath + byte)
+        }
+    }
 }
+

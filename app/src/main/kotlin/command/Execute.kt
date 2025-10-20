@@ -25,6 +25,7 @@ suspend fun executeRedisCommand(command: RedisCommand, context: ExecutionContext
         is RedisCommand.Type -> executeType(command, context)
         is RedisCommand.XAdd -> executeXAdd(command, context)
         is RedisCommand.XRange -> executeXRange(command, context)
+        is RedisCommand.XRead -> executeXRead(command, context)
     }
 }
 
@@ -198,5 +199,19 @@ fun executeXRange(command: RedisCommand.XRange, context: ExecutionContext): Resp
     return stream.stream.range(command.start, command.end).getOrElse {
         return RespSimpleError(it.message!!)
     }
+}
 
+fun executeXRead(command: RedisCommand.XRead, context: ExecutionContext): RespValue {
+    for ((key, _) in command.keysToStarts) {
+        if (context.dataStore.get(key) !is RespStream) {
+            return RespSimpleError("WRONGTYPE Operation against a key holding the wrong kind of value")
+        }
+    }
+
+    val results = command.keysToStarts.map { (key, start) ->
+        val stream = context.dataStore.get(key) as RespStream
+        val entries = stream.stream.range(start, startExcl = true).getOrThrow()
+        RespArray(mutableListOf(key as WritableRespValue, entries))
+    }
+    return RespArray(results.toMutableList())
 }
