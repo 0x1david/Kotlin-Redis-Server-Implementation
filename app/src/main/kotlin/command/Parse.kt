@@ -10,23 +10,35 @@ fun parseCommand(resp: RespValue): Result<RedisCommand> {
 
     return when (commandName) {
         "PING" -> Result.success(RedisCommand.Ping)
-        "ECHO" -> parseEcho(resp)
-        "GET" -> parseGet(resp)
+        "ECHO" -> parseSingleCommandArg(resp, "echo", RedisCommand::Echo)
+        "GET" -> parseSingleCommandArg(resp, "get", RedisCommand::Get)
+        "LLEN" -> parseSingleCommandArg(resp, "llen", RedisCommand::LLen)
+        "TYPE" -> parseSingleCommandArg(resp, "type", RedisCommand::Type)
+        "INCR" -> parseSingleCommandArg(resp, "incr", RedisCommand::Incr)
         "SET" -> parseSet(resp)
         "RPUSH" -> parseRPush(resp)
         "LPUSH" -> parseLPush(resp)
         "RPOP" -> parseRPop(resp)
         "LPOP" -> parseLPop(resp)
         "BLPOP" -> parseBLPop(resp)
-        "LLEN" -> parseLLen(resp)
         "LRANGE" -> parseLRange(resp)
-        "TYPE" -> parseType(resp)
         "XADD" -> parseXAdd(resp)
         "XRANGE" -> parseXRange(resp)
         "XREAD" -> parseXRead(resp)
         else -> Result.failure(ParseException("ERR unknown command '$commandName'"))
     }
 }
+
+fun <T : RedisCommand> parseSingleCommandArg(
+    resp: RespArray,
+    commandName: String,
+    constructor: (RespValue) -> T
+): Result<T> =
+    if (resp.elements.size != 2) {
+        Result.failure(ParseException("ERR wrong number of arguments for '$commandName' command: ${resp.elements.size}"))
+    } else {
+        Result.success(constructor(resp.elements[1]))
+    }
 
 
 fun parseXAdd(resp: RespArray): Result<RedisCommand.XAdd> {
@@ -95,27 +107,6 @@ fun parseXRead(resp: RespArray): Result<RedisCommand.XRead> {
     return Result.success(RedisCommand.XRead(keysToStarts, blockTimeout))
 }
 
-
-fun parseEcho(resp: RespArray): Result<RedisCommand.Echo> =
-    if (resp.elements.size != 2) {
-        Result.failure(ParseException("ERR wrong number of arguments for 'echo' command: ${resp.elements.size}"))
-    } else {
-        Result.success(RedisCommand.Echo(resp.elements[1]))
-    }
-
-fun parseType(resp: RespArray): Result<RedisCommand.Type> =
-    if (resp.elements.size != 2) {
-        Result.failure(ParseException("ERR wrong number of arguments for 'type' command: ${resp.elements.size}"))
-    } else {
-        Result.success(RedisCommand.Type(resp.elements[1]))
-    }
-
-fun parseGet(resp: RespArray): Result<RedisCommand.Get> =
-    if (resp.elements.size != 2) {
-        Result.failure(ParseException("ERR wrong number of arguments for 'get' command: ${resp.elements.size}"))
-    } else {
-        Result.success(RedisCommand.Get(resp.elements[1]))
-    }
 
 fun parseSet(resp: RespArray): Result<RedisCommand.Set> {
     val size = resp.elements.size
@@ -194,12 +185,6 @@ fun parseBLPop(resp: RespArray): Result<RedisCommand.BLPop> {
     return Result.success(RedisCommand.BLPop(key, timeoutValue))
 }
 
-fun parseLLen(resp: RespArray): Result<RedisCommand.LLen> =
-    if (resp.elements.size != 2) {
-        Result.failure(ParseException("ERR wrong number of arguments for 'llen' command: ${resp.elements.size}"))
-    } else {
-        Result.success(RedisCommand.LLen(resp.elements[1]))
-    }
 
 fun parseLRange(resp: RespArray): Result<RedisCommand.LRange> {
     if (resp.elements.size != 4) {

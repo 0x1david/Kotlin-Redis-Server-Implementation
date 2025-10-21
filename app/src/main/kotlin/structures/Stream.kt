@@ -22,7 +22,8 @@ class RedisStream(
         return Result.success(parsedId)
     }
 
-    // TODO(dbo): This logic should be probably moved out of stream and to execute layer
+    fun getMaxIdForStream() = trie.getStreamMaxId() ?: StreamId(0uL, 0uL)
+
     fun range(
         start: String,
         end: String? = null,
@@ -32,6 +33,7 @@ class RedisStream(
         runCatching {
             val startId = when (start) {
                 "-" -> null
+
                 else -> {
                     val (startTime, startSeq) = start.split("-", limit = 2)
                         .let { it[0].toULong() to (it.getOrNull(1)?.toULongOrNull() ?: 0u) }

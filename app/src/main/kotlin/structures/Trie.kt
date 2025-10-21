@@ -1,3 +1,6 @@
+import kotlin.collections.component1
+import kotlin.collections.component2
+
 // Currently for beginning of implementation we use a simple True
 // Later on a switch to Radix Tree with Packed Leafs
 data class TrieNode(
@@ -20,6 +23,21 @@ class StreamTrie {
     fun insert(entry: StreamEntry) {
         val isNew = insertRecursive(root, entry.id.toBytes(), 0, entry)
         if (isNew) size++
+    }
+
+    fun getStreamMaxId(): StreamId? {
+        var current = root
+        val path = ByteArray(16)
+
+        for (i in 0 until 16) {
+            if (current.children.isEmpty()) return null
+
+            val maxByte = current.children.keys.max()
+            path[i] = maxByte
+            current = current.children[maxByte]!!
+        }
+
+        return current.value?.id
     }
 
     fun search(id: StreamId): StreamEntry? = searchRecursive(root, id.toBytes(), 0)

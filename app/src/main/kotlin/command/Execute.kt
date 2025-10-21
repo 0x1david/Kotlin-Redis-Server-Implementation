@@ -11,9 +11,9 @@ data class ExecutionContext(
 
 suspend fun executeRedisCommand(command: RedisCommand, context: ExecutionContext): RespValue {
     return when (command) {
-        is RedisCommand.Ping -> executePing()
-        is RedisCommand.Echo -> executeEcho(command)
-        is RedisCommand.Get -> executeGet(command, context)
+        is RedisCommand.Ping -> RespSimpleString("PONG")
+        is RedisCommand.Echo -> command.message
+        is RedisCommand.Get -> context.dataStore.get(command.key)
         is RedisCommand.Set -> executeSet(command, context)
         is RedisCommand.RPush -> executeRPush(command, context)
         is RedisCommand.LPush -> executeLPush(command, context)
@@ -26,16 +26,30 @@ suspend fun executeRedisCommand(command: RedisCommand, context: ExecutionContext
         is RedisCommand.XAdd -> executeXAdd(command, context)
         is RedisCommand.XRange -> executeXRange(command, context)
         is RedisCommand.XRead -> executeXRead(command, context)
+        is RedisCommand.Incr -> executeIncr(command, context)
     }
 }
 
 
-fun executePing(): RespValue = RespSimpleString("PONG")
+fun executeIncr(command: RedisCommand.Incr, context: ExecutionContext): RespValue =
+    when (val item = context.dataStore.get(command.key)) {
+        is RespNull -> RespInteger(1).also { context.dataStore.set(command.key, it) }
+        is RespInteger -> {
+            context.dataStore.set(command.key, RespBulkString((item.value + 1).toString()))
+            RespInteger(item.value + 1)
+        }
 
-fun executeEcho(command: RedisCommand.Echo): RespValue = command.message
+        is RespBulkString -> {
+            val intValue = item.value!!.toLongOrNull()
+                ?: return RespSimpleError("ERR value is not an integer or out of range")
+            context.dataStore.set(command.key, RespBulkString((intValue + 1).toString()))
+            RespInteger(intValue + 1)
+        }
 
-fun executeGet(command: RedisCommand.Get, context: ExecutionContext): RespValue =
-    context.dataStore.get(command.key)
+        else -> {
+            RespSimpleError("ERR value is not an integer or out of range")
+        }
+    }
 
 fun executeSet(command: RedisCommand.Set, context: ExecutionContext): RespValue {
     context.dataStore.set(command.key, command.value, command.params)
@@ -234,7 +248,6 @@ fun executeXRange(command: RedisCommand.XRange, context: ExecutionContext): Resp
 
 suspend fun executeXRead(command: RedisCommand.XRead, context: ExecutionContext): RespValue {
     context.checkTimeouts()
-
     for ((key, _) in command.keysToStarts) {
         val value = context.dataStore.get(key)
         if (value !is RespNull && value !is RespStream) {
@@ -242,7 +255,15 @@ suspend fun executeXRead(command: RedisCommand.XRead, context: ExecutionContext)
         }
     }
 
-    val results = command.keysToStarts.mapNotNull { (key, start) ->
+    val resolvedKeysToStarts = command.keysToStarts.map { (key, start) ->
+        val resolved = if (start == "$") {
+            (context.dataStore.get(key) as? RespStream)
+                ?.stream?.getMaxIdForStream()?.toString() ?: "0-0"
+        } else start
+        key to resolved
+    }
+
+    val results = resolvedKeysToStarts.mapNotNull { (key, start) ->
         val stream = context.dataStore.get(key) as? RespStream ?: return@mapNotNull null
         val entries = stream.stream.range(start, startExcl = true).getOrThrow()
         if (entries.elements.isEmpty()) null
@@ -251,7 +272,11 @@ suspend fun executeXRead(command: RedisCommand.XRead, context: ExecutionContext)
 
     if (results.isNotEmpty() || command.timeout == null) return RespArray(results.toMutableList())
 
-    val keys = command.keysToStarts.map { it.first }
-    context.blockedMap.blockClient(context.clientId, keys, timeoutSec = command.timeout / 1000.0, command = command)
+    context.blockedMap.blockClient(
+        context.clientId,
+        resolvedKeysToStarts.map { it.first },
+        timeoutSec = command.timeout / 1000.0,
+        command = command.copy(keysToStarts = resolvedKeysToStarts)
+    )
     return NoResponse
 }
