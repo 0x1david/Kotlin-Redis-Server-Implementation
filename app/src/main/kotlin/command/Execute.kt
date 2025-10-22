@@ -1,3 +1,5 @@
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
 import java.util.concurrent.ConcurrentHashMap
 
@@ -5,13 +7,34 @@ data class ExecutionContext(
     val dataStore: RedisDataStore,
     val blockedMap: BlockedMap,
     val responseChannels: ConcurrentHashMap<String, Channel<WritableRespValue>>,
+    var connectionState: ConnectionState,
+    val commandQueue: ArrayDeque<RedisCommand>,
     val clientId: String,
     val checkTimeouts: suspend () -> Unit
 )
 
 suspend fun executeRedisCommand(command: RedisCommand, context: ExecutionContext): RespValue {
     return when (command) {
+        is RedisCommand.Multi -> context.connectionState = ConnectionState.Multi
+        is RedisCommand.Discard -> {
+            context.commandQueue.clear()
+            context.connectionState = ConnectionState.Standard
+        }
+
+        is RedisCommand.Exec -> {
+            val out = context.commandQueue.mapTo(mutableListOf()) {
+                async { executeRedisCommand(it) }
+            }.awaitAll()
+
+            context.commandQueue.clear()
+            context.connectionState = ConnectionState.Standard
+
+            return RespArray(out)
+        }
+
+
         is RedisCommand.Ping -> RespSimpleString("PONG")
+
         is RedisCommand.Echo -> command.message
         is RedisCommand.Get -> context.dataStore.get(command.key)
         is RedisCommand.Set -> executeSet(command, context)

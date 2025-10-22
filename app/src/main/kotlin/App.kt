@@ -9,6 +9,17 @@ import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
+enum class ConnectionState {
+    Standard,
+    Multi,
+}
+
+class ClientConnection(
+    val channel: Channel<WritableRespValue>,
+    val state: ConnectionState,
+    val commandQueue: ArrayDeque<RedisCommand>
+)
+
 class RedisServer(
     private val host: String = "0.0.0.0",
     private val port: Int = 6379
@@ -16,7 +27,7 @@ class RedisServer(
     private val dataStore = RedisDataStore()
     private val commandChannel = Channel<CommandRequest>(Channel.UNLIMITED)
     private val blockedMap = BlockedMap()
-    private val responseChannels = ConcurrentHashMap<String, Channel<WritableRespValue>>()
+    private val connectionMap = ConcurrentHashMap<String, ClientConnection>()
     private val clientIdCounter = AtomicLong(0)
 
     suspend fun start() {
@@ -40,8 +51,8 @@ class RedisServer(
         val expired = blockedMap.getClientsTimingOutBefore(Instant.now())
         expired.forEach {
             when (it.command) {
-                is RedisCommand.XRead, is RedisCommand.BLPop -> responseChannels[it.clientId]?.send(RespNullArray)
-                else -> responseChannels[it.clientId]?.send(RespNull)
+                is RedisCommand.XRead, is RedisCommand.BLPop -> connectionMap[it.clientId]?.channel?.send(RespNullArray)
+                else -> connectionMap[it.clientId]?.channel?.send(RespNull)
 
             }
         }
@@ -70,7 +81,7 @@ class RedisServer(
     private suspend fun handleClient(socket: Socket) {
         val clientId = clientIdCounter.getAndIncrement().toString()
         val responseChannel = Channel<WritableRespValue>(Channel.UNLIMITED)
-        responseChannels[clientId] = responseChannel
+        connectionMap[clientId] = ClientConnection(responseChannel, ConnectionState.Standard, ArrayDeque())
 
         socket.use {
             val input = it.openReadChannel()
@@ -97,7 +108,7 @@ class RedisServer(
             }
         }
 
-        responseChannels.remove(clientId)
+        connectionMap.remove(clientId)
         blockedMap.unblockClient(clientId)
     }
 
@@ -112,7 +123,7 @@ class RedisServer(
         val context = ExecutionContext(
             dataStore = dataStore,
             blockedMap = blockedMap,
-            responseChannels = responseChannels,
+            responseChannels = connectionMap,
             clientId = request.clientId,
             checkTimeouts = ::checkAndHandleTimeouts
         )

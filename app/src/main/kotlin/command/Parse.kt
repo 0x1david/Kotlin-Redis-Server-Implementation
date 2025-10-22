@@ -10,6 +10,9 @@ fun parseCommand(resp: RespValue): Result<RedisCommand> {
 
     return when (commandName) {
         "PING" -> Result.success(RedisCommand.Ping)
+        "MULTI" -> Result.success(RedisCommand.Multi)
+        "EXEC" -> Result.success(RedisCommand.Exec)
+        "DISCARD" -> Result.success(RedisCommand.Discard)
         "ECHO" -> parseSingleCommandArg(resp, "echo", RedisCommand::Echo)
         "GET" -> parseSingleCommandArg(resp, "get", RedisCommand::Get)
         "LLEN" -> parseSingleCommandArg(resp, "llen", RedisCommand::LLen)

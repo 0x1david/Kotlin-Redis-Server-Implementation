@@ -25,9 +25,7 @@ class BlockedMap {
     private val clientToKeys: HashMap<String, MutableList<RespValue>> = HashMap()
     private val timeoutQueue: PriorityQueue<TimeoutEntry> = PriorityQueue(compareBy { it.deadline })
 
-    fun getEarliestTimeout(): TimeoutEntry? {
-        return timeoutQueue.peek()
-    }
+    fun getEarliestTimeout(): TimeoutEntry? = timeoutQueue.peek()
 
     fun blockClient(clientId: String, keys: List<RespValue>, command: RedisCommand, timeoutSec: Double) {
         val client = BlockedClient(clientId, command)

@@ -3,6 +3,9 @@ import java.util.concurrent.ConcurrentHashMap
 
 sealed interface RedisCommand {
     data object Ping : RedisCommand
+    data object Multi : RedisCommand
+    data object Exec : RedisCommand
+    data object Discard : RedisCommand
     data class Echo(val message: RespValue) : RedisCommand
     data class Get(val key: RespValue) : RedisCommand
     data class Set(val key: RespValue, val value: RespValue, val params: DataStoreParams) : RedisCommand

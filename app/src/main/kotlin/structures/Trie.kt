@@ -7,7 +7,7 @@ data class TrieNode(
     // Map Representation over linked list due to sparse data
     val children: MutableMap<Byte, TrieNode> = mutableMapOf(),
     var value: StreamEntry? = null
-) {}
+)
 
 class StreamTrie {
     private val root = TrieNode()
