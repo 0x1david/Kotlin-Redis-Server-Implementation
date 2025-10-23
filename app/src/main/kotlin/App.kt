@@ -15,10 +15,17 @@ enum class ConnectionState {
 }
 
 class ClientConnection(
-    val channel: Channel<WritableRespValue>,
-    val state: ConnectionState,
-    val commandQueue: ArrayDeque<RedisCommand>
-)
+    var state: ConnectionState,
+    val commandQueue: ArrayDeque<RedisCommand>,
+) {
+    companion object : () -> ClientConnection {
+        override operator fun invoke(): ClientConnection = ClientConnection(
+            ConnectionState.Standard,
+            ArrayDeque()
+        )
+    }
+}
+
 
 class RedisServer(
     private val host: String = "0.0.0.0",
@@ -28,6 +35,7 @@ class RedisServer(
     private val commandChannel = Channel<CommandRequest>(Channel.UNLIMITED)
     private val blockedMap = BlockedMap()
     private val connectionMap = ConcurrentHashMap<String, ClientConnection>()
+    private val channelMap = ConcurrentHashMap<String, Channel<WritableRespValue>>()
     private val clientIdCounter = AtomicLong(0)
 
     suspend fun start() {
@@ -51,8 +59,8 @@ class RedisServer(
         val expired = blockedMap.getClientsTimingOutBefore(Instant.now())
         expired.forEach {
             when (it.command) {
-                is RedisCommand.XRead, is RedisCommand.BLPop -> connectionMap[it.clientId]?.channel?.send(RespNullArray)
-                else -> connectionMap[it.clientId]?.channel?.send(RespNull)
+                is RedisCommand.XRead, is RedisCommand.BLPop -> channelMap[it.clientId]?.send(RespNullArray)
+                else -> channelMap[it.clientId]?.send(RespNull)
 
             }
         }
@@ -81,7 +89,8 @@ class RedisServer(
     private suspend fun handleClient(socket: Socket) {
         val clientId = clientIdCounter.getAndIncrement().toString()
         val responseChannel = Channel<WritableRespValue>(Channel.UNLIMITED)
-        connectionMap[clientId] = ClientConnection(responseChannel, ConnectionState.Standard, ArrayDeque())
+        connectionMap[clientId] = ClientConnection(ConnectionState.Standard, ArrayDeque())
+        channelMap[clientId] = responseChannel
 
         socket.use {
             val input = it.openReadChannel()
@@ -123,7 +132,8 @@ class RedisServer(
         val context = ExecutionContext(
             dataStore = dataStore,
             blockedMap = blockedMap,
-            responseChannels = connectionMap,
+            responseChannels = channelMap,
+            connection = connectionMap.getOrPut(request.clientId, ClientConnection),
             clientId = request.clientId,
             checkTimeouts = ::checkAndHandleTimeouts
         )

@@ -1,5 +1,3 @@
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
 import java.util.concurrent.ConcurrentHashMap
 
@@ -7,37 +5,29 @@ data class ExecutionContext(
     val dataStore: RedisDataStore,
     val blockedMap: BlockedMap,
     val responseChannels: ConcurrentHashMap<String, Channel<WritableRespValue>>,
-    var connectionState: ConnectionState,
-    val commandQueue: ArrayDeque<RedisCommand>,
+    var connection: ClientConnection,
     val clientId: String,
     val checkTimeouts: suspend () -> Unit
 )
 
 suspend fun executeRedisCommand(command: RedisCommand, context: ExecutionContext): RespValue {
+    if (context.connection.state == ConnectionState.Multi &&
+        command !is RedisCommand.Exec &&
+        command !is RedisCommand.Discard
+    ) {
+        context.connection.commandQueue.add(command)
+        return RespSimpleString("QUEUED")
+    }
+
     return when (command) {
-        is RedisCommand.Multi -> context.connectionState = ConnectionState.Multi
-        is RedisCommand.Discard -> {
-            context.commandQueue.clear()
-            context.connectionState = ConnectionState.Standard
-        }
-
-        is RedisCommand.Exec -> {
-            val out = context.commandQueue.mapTo(mutableListOf()) {
-                async { executeRedisCommand(it) }
-            }.awaitAll()
-
-            context.commandQueue.clear()
-            context.connectionState = ConnectionState.Standard
-
-            return RespArray(out)
-        }
-
-
         is RedisCommand.Ping -> RespSimpleString("PONG")
-
         is RedisCommand.Echo -> command.message
-        is RedisCommand.Get -> context.dataStore.get(command.key)
+        is RedisCommand.Get -> executeGet(command, context)
         is RedisCommand.Set -> executeSet(command, context)
+        is RedisCommand.Type -> executeType(command, context)
+        is RedisCommand.Incr -> executeIncr(command, context)
+
+        // Arrays
         is RedisCommand.RPush -> executeRPush(command, context)
         is RedisCommand.LPush -> executeLPush(command, context)
         is RedisCommand.RPop -> executeRPop(command, context)
@@ -45,14 +35,45 @@ suspend fun executeRedisCommand(command: RedisCommand, context: ExecutionContext
         is RedisCommand.BLPop -> executeBLPop(command, context)
         is RedisCommand.LLen -> executeLLen(command, context)
         is RedisCommand.LRange -> executeLRange(command, context)
-        is RedisCommand.Type -> executeType(command, context)
+
+        // Streams
         is RedisCommand.XAdd -> executeXAdd(command, context)
         is RedisCommand.XRange -> executeXRange(command, context)
         is RedisCommand.XRead -> executeXRead(command, context)
-        is RedisCommand.Incr -> executeIncr(command, context)
+
+        // Transactions
+        is RedisCommand.Discard -> executeDiscard(context)
+        is RedisCommand.Exec -> executeExec(context)
+        is RedisCommand.Multi -> executeMulti(context)
     }
 }
 
+fun executeMulti(context: ExecutionContext): RespValue {
+    context.connection.state = ConnectionState.Multi
+    return RespSimpleString("OK")
+}
+
+fun executeDiscard(context: ExecutionContext): RespValue {
+    if (context.connection.state != ConnectionState.Multi) {
+        return RespSimpleError("ERR DISCARD without MULTI")
+    }
+    context.connection.commandQueue.clear()
+    context.connection.state = ConnectionState.Standard
+    return RespSimpleString("OK")
+}
+
+suspend fun executeExec(context: ExecutionContext): RespValue {
+    if (context.connection.state != ConnectionState.Multi) {
+        return RespSimpleError("ERR EXEC without MULTI")
+    }
+
+    context.connection.state = ConnectionState.Standard
+    val out = context.connection.commandQueue
+        .map { cmd -> executeRedisCommand(cmd, context) }
+        .filterIsInstanceTo(mutableListOf<WritableRespValue>())
+    context.connection.commandQueue.clear()
+    return RespArray(out)
+}
 
 fun executeIncr(command: RedisCommand.Incr, context: ExecutionContext): RespValue =
     when (val item = context.dataStore.get(command.key)) {
@@ -303,3 +324,15 @@ suspend fun executeXRead(command: RedisCommand.XRead, context: ExecutionContext)
     )
     return NoResponse
 }
+
+fun executeGet(command: RedisCommand.Get, context: ExecutionContext): RespValue =
+    when (val value = context.dataStore.get(command.key)) {
+        is RespBulkString -> value
+        is RespSimpleString -> RespBulkString(value.value)
+        is RespInteger -> RespBulkString(value.value.toString())
+        is RespBigNumber -> RespBulkString(value.value)
+        is RespBool -> RespBulkString(value.value.toString())
+        is RespDouble -> RespBulkString(value.value.toString())
+        is RespNull -> RespNull
+        else -> RespSimpleError("WRONGTYPE Operation against a key holding the wrong kind of value")
+    }
