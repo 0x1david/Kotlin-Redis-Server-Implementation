@@ -1,26 +1,32 @@
 import kotlinx.coroutines.channels.Channel
 import java.util.concurrent.ConcurrentHashMap
 
+
 data class ExecutionContext(
     val dataStore: RedisDataStore,
     val blockedMap: BlockedMap,
-    val responseChannels: ConcurrentHashMap<String, Channel<WritableRespValue>>,
+    val responseChannels: ConcurrentHashMap<UserId, Channel<WritableRespValue>>,
+    val pubSubMap: ConcurrentHashMap<String, MutableSet<UserId>>,
     var connection: ClientConnection,
     val clientId: String,
     val checkTimeouts: suspend () -> Unit
 )
 
 suspend fun executeRedisCommand(command: RedisCommand, context: ExecutionContext): RespValue {
-    if (context.connection.state == ConnectionState.Multi &&
-        command !is RedisCommand.Exec &&
-        command !is RedisCommand.Discard
-    ) {
+    if (context.connection.state == ConnectionState.Subscribed && command::class !in ALLOWED_COMMANDS_SUBSCRIBED) {
+        return RespSimpleError("ERR Can't execute '${command.javaClass.simpleName.lowercase()}' in subscribed mode")
+    }
+
+    if (context.connection.state == ConnectionState.Multi && command::class !in ALLOWED_COMMANDS_MULTI) {
         context.connection.commandQueue.add(command)
         return RespSimpleString("QUEUED")
     }
 
     return when (command) {
-        is RedisCommand.Ping -> RespSimpleString("PONG")
+        is RedisCommand.Ping -> if (context.connection.state != ConnectionState.Subscribed) RespSimpleString("PONG") else RespArray(
+            mutableListOf(RespBulkString("pong"), RespBulkString(""))
+        )
+
         is RedisCommand.Echo -> command.message
         is RedisCommand.Get -> executeGet(command, context)
         is RedisCommand.Set -> executeSet(command, context)
@@ -45,7 +51,70 @@ suspend fun executeRedisCommand(command: RedisCommand, context: ExecutionContext
         is RedisCommand.Discard -> executeDiscard(context)
         is RedisCommand.Exec -> executeExec(context)
         is RedisCommand.Multi -> executeMulti(context)
+
+        // PubSub
+        is RedisCommand.Subscribe -> executeSubscribe(command, context)
+        is RedisCommand.Unsubscribe -> executeUnsubscribe(command, context)
+        is RedisCommand.Publish -> executePublish(command, context)
     }
+}
+
+fun executeSubscribe(command: RedisCommand.Subscribe, context: ExecutionContext): RespValue {
+    val chanKey = command.chanKey as? RespBulkString ?: return RespSimpleError("Incompatible channel name type")
+
+    context.connection.state = ConnectionState.Subscribed
+    val chan = context.pubSubMap.getOrPut(chanKey.toString()) { mutableSetOf() }
+    if (chan.add(context.clientId)) context.connection.subCount++
+
+    return RespArray(
+        mutableListOf(
+            RespBulkString("subscribe"),
+            chanKey,
+            RespInteger(context.connection.subCount)
+        )
+    )
+}
+
+fun executeUnsubscribe(command: RedisCommand.Unsubscribe, context: ExecutionContext): RespValue {
+    val chanKey = command.chanKey as? RespBulkString ?: return RespSimpleError("Incompatible channel name type")
+
+    if (context.connection.subCount > 0 && --context.connection.subCount == 0L) {
+        context.connection.state = ConnectionState.Standard
+    }
+    context.pubSubMap[chanKey.toString()]?.remove(context.clientId)
+
+    return RespArray(
+        mutableListOf(
+            RespBulkString("unsubscribe"),
+            chanKey,
+            RespInteger(context.connection.subCount)
+        )
+    )
+}
+
+
+suspend fun executePublish(command: RedisCommand.Publish, context: ExecutionContext): RespValue {
+    val chanKey = command.chanKey as? RespBulkString ?: return RespSimpleError("Incompatible channel name type")
+    val chan = context.pubSubMap.get(chanKey.toString())
+
+    println("Publishing to channel: ${chanKey.toString()}, subscribers: ${chan?.size ?: 0}")
+
+    chan?.forEach { subscriberId ->
+        val responseChannel = context.responseChannels[subscriberId]
+        println("Subscriber: $subscriberId, channel exists: ${responseChannel != null}")
+        responseChannel?.send(
+            RespArray(
+                mutableListOf(
+                    RespBulkString("message"),
+                    chanKey,
+                    command.message,
+                )
+            )
+        )
+        println("Sent to subscriber: $subscriberId")
+    }
+
+    return RespInteger(chan?.size?.toLong() ?: 0)
 }
 
 fun executeMulti(context: ExecutionContext): RespValue {
@@ -54,9 +123,8 @@ fun executeMulti(context: ExecutionContext): RespValue {
 }
 
 fun executeDiscard(context: ExecutionContext): RespValue {
-    if (context.connection.state != ConnectionState.Multi) {
-        return RespSimpleError("ERR DISCARD without MULTI")
-    }
+    if (context.connection.state != ConnectionState.Multi) return RespSimpleError("ERR DISCARD without MULTI")
+
     context.connection.commandQueue.clear()
     context.connection.state = ConnectionState.Standard
     return RespSimpleString("OK")

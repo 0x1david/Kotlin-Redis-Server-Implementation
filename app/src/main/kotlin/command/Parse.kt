@@ -28,6 +28,9 @@ fun parseCommand(resp: RespValue): Result<RedisCommand> {
         "XADD" -> parseXAdd(resp)
         "XRANGE" -> parseXRange(resp)
         "XREAD" -> parseXRead(resp)
+        "PUBLISH" -> parsePublish(resp)
+        "SUBSCRIBE" -> parseSingleCommandArg(resp, "subscribe", RedisCommand::Subscribe)
+        "UNSUBSCRIBE" -> parseSingleCommandArg(resp, "unsubscribe", RedisCommand::Unsubscribe)
         else -> Result.failure(ParseException("ERR unknown command '$commandName'"))
     }
 }
@@ -123,6 +126,13 @@ fun parseSet(resp: RespArray): Result<RedisCommand.Set> {
 
     return Result.success(RedisCommand.Set(resp.elements[1], resp.elements[2], params))
 }
+
+fun parsePublish(resp: RespArray): Result<RedisCommand.Publish> =
+    if (resp.elements.size != 3) {
+        Result.failure(ParseException("ERR wrong number of arguments for 'publish' command: ${resp.elements.size}"))
+    } else {
+        Result.success(RedisCommand.Publish(resp.elements[1], resp.elements[2]))
+    }
 
 fun parseRPush(resp: RespArray): Result<RedisCommand.RPush> =
     if (resp.elements.size < 3) {

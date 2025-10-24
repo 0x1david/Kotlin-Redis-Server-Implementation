@@ -21,4 +21,12 @@ sealed interface RedisCommand {
     data class XRange(val key: RespValue, val start: String, val end: String) : RedisCommand
     data class XRead(val keysToStarts: List<Pair<RespValue, String>>, val timeout: Double?) : RedisCommand
     data class Incr(val key: RespValue) : RedisCommand
+    data class Subscribe(val chanKey: RespValue) : RedisCommand
+    data class Unsubscribe(val chanKey: RespValue) : RedisCommand
+    data class Publish(val chanKey: RespValue, val message: WritableRespValue) : RedisCommand
 }
+
+val ALLOWED_COMMANDS_SUBSCRIBED =
+    setOf(RedisCommand.Subscribe::class, RedisCommand.Unsubscribe::class, RedisCommand.Ping::class)
+
+val ALLOWED_COMMANDS_MULTI = setOf(RedisCommand.Exec::class, RedisCommand.Discard::class)

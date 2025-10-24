@@ -12,11 +12,16 @@ import java.util.concurrent.atomic.AtomicLong
 enum class ConnectionState {
     Standard,
     Multi,
+    Subscribed,
 }
+
+typealias UserId = String
+
 
 class ClientConnection(
     var state: ConnectionState,
     val commandQueue: ArrayDeque<RedisCommand>,
+    var subCount: Long = 0
 ) {
     companion object : () -> ClientConnection {
         override operator fun invoke(): ClientConnection = ClientConnection(
@@ -34,8 +39,9 @@ class RedisServer(
     private val dataStore = RedisDataStore()
     private val commandChannel = Channel<CommandRequest>(Channel.UNLIMITED)
     private val blockedMap = BlockedMap()
-    private val connectionMap = ConcurrentHashMap<String, ClientConnection>()
-    private val channelMap = ConcurrentHashMap<String, Channel<WritableRespValue>>()
+    private val clientToConnectionInfo = ConcurrentHashMap<UserId, ClientConnection>()
+    private val clientToChannel = ConcurrentHashMap<UserId, Channel<WritableRespValue>>()
+    private val publisherToSubscriber = ConcurrentHashMap<String, MutableSet<UserId>>()
     private val clientIdCounter = AtomicLong(0)
 
     suspend fun start() {
@@ -59,8 +65,8 @@ class RedisServer(
         val expired = blockedMap.getClientsTimingOutBefore(Instant.now())
         expired.forEach {
             when (it.command) {
-                is RedisCommand.XRead, is RedisCommand.BLPop -> channelMap[it.clientId]?.send(RespNullArray)
-                else -> channelMap[it.clientId]?.send(RespNull)
+                is RedisCommand.XRead, is RedisCommand.BLPop -> clientToChannel[it.clientId]?.send(RespNullArray)
+                else -> clientToChannel[it.clientId]?.send(RespNull)
 
             }
         }
@@ -89,35 +95,39 @@ class RedisServer(
     private suspend fun handleClient(socket: Socket) {
         val clientId = clientIdCounter.getAndIncrement().toString()
         val responseChannel = Channel<WritableRespValue>(Channel.UNLIMITED)
-        connectionMap[clientId] = ClientConnection(ConnectionState.Standard, ArrayDeque())
-        channelMap[clientId] = responseChannel
+        clientToConnectionInfo[clientId] = ClientConnection(ConnectionState.Standard, ArrayDeque())
+        clientToChannel[clientId] = responseChannel
 
         socket.use {
             val input = it.openReadChannel()
             val output = it.openWriteChannel(autoFlush = true)
 
-            while (!input.isClosedForRead) {
+            coroutineScope {
+                val responseJob = launch {
+                    for (response in responseChannel) {
+                        if (response != NoResponse) {
+                            output.writeRespValue(response)
+                        }
+                    }
+                }
+
                 try {
-                    val data = input.readRespValue()
-                    println("Received: $data")
-
-                    commandChannel.send(CommandRequest(data, responseChannel, clientId))
-                    val response = responseChannel.receive()
-
-                    if (response != NoResponse) {
-                        output.writeRespValue(response)
+                    while (!input.isClosedForRead) {
+                        val data = input.readRespValue()
+                        println("Received: $data")
+                        commandChannel.send(CommandRequest(data, responseChannel, clientId))
                     }
                 } catch (e: EOFException) {
                     println("Client disconnected")
-                    break
                 } catch (e: Exception) {
                     println("Error: ${e.message}")
-                    break
+                } finally {
+                    responseJob.cancel()
                 }
             }
         }
 
-        connectionMap.remove(clientId)
+        clientToConnectionInfo.remove(clientId)
         blockedMap.unblockClient(clientId)
     }
 
@@ -132,8 +142,9 @@ class RedisServer(
         val context = ExecutionContext(
             dataStore = dataStore,
             blockedMap = blockedMap,
-            responseChannels = channelMap,
-            connection = connectionMap.getOrPut(request.clientId, ClientConnection),
+            responseChannels = clientToChannel,
+            connection = clientToConnectionInfo.getOrPut(request.clientId, ClientConnection),
+            pubSubMap = publisherToSubscriber,
             clientId = request.clientId,
             checkTimeouts = ::checkAndHandleTimeouts
         )
