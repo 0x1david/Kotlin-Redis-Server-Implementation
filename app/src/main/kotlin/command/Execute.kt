@@ -97,21 +97,17 @@ suspend fun executePublish(command: RedisCommand.Publish, context: ExecutionCont
     val chanKey = command.chanKey as? RespBulkString ?: return RespSimpleError("Incompatible channel name type")
     val chan = context.pubSubMap.get(chanKey.toString())
 
-    println("Publishing to channel: ${chanKey.toString()}, subscribers: ${chan?.size ?: 0}")
-
     chan?.forEach { subscriberId ->
         val responseChannel = context.responseChannels[subscriberId]
-        println("Subscriber: $subscriberId, channel exists: ${responseChannel != null}")
         responseChannel?.send(
             RespArray(
                 mutableListOf(
                     RespBulkString("message"),
                     chanKey,
-                    command.message,
+                    command.message
                 )
             )
         )
-        println("Sent to subscriber: $subscriberId")
     }
 
     return RespInteger(chan?.size?.toLong() ?: 0)

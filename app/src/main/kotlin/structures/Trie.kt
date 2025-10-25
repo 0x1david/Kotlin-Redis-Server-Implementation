@@ -1,9 +1,6 @@
-import kotlin.collections.component1
-import kotlin.collections.component2
-
 // Currently for beginning of implementation we use a simple True
 // Later on a switch to Radix Tree with Packed Leafs
-data class TrieNode(
+class TrieNode(
     // Map Representation over linked list due to sparse data
     val children: MutableMap<Byte, TrieNode> = mutableMapOf(),
     var value: StreamEntry? = null
